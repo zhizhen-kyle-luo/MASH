@@ -1,0 +1,33 @@
+{
+  "case_id": "case_002",
+  "demographics": {
+    "age": 32,
+    "sex": "M"
+  },
+  "chief_complaint": "I've had chest pain and shortness of breath for the last hour. I'm worried it might be my heart.",
+  "symptoms": [
+    "Chest pain",
+    "Shortness of breath",
+    "Sweating",
+    "Dizziness"
+  ],
+  "vitals": {
+    "temperature": "98.6°F",
+    "blood_pressure": "160/95",
+    "heart_rate": "110",
+    "respiratory_rate": "22"
+  },
+  "history": [
+    "Father had heart attack at age 50",
+    "Smoker - 1 pack per day for 10 years",
+    "High cholesterol"
+  ],
+  "insurance": {
+    "plan": "Kaiser HMO",
+    "in_network": false
+  },
+  "constraints": {
+    "prefer_morning": true
+  },
+  "availability": {}
+}

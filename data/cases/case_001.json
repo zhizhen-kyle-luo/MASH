@@ -1,0 +1,33 @@
+{
+  "case_id": "case_001",
+  "demographics": {
+    "age": 45,
+    "sex": "F"
+  },
+  "chief_complaint": "I've been having sharp abdominal pain on the right side for the past 2 days. It's getting worse and I'm worried it might be my appendix.",
+  "symptoms": [
+    "Right-sided abdominal pain",
+    "Pain worsened with movement",
+    "Nausea",
+    "Low-grade fever"
+  ],
+  "vitals": {
+    "temperature": "100.2°F",
+    "blood_pressure": "135/80",
+    "heart_rate": "95",
+    "respiratory_rate": "18"
+  },
+  "history": [
+    "No previous abdominal surgeries",
+    "No known allergies",
+    "Currently taking no medications"
+  ],
+  "insurance": {
+    "plan": "Blue Cross Blue Shield",
+    "in_network": true
+  },
+  "constraints": {
+    "prefer_morning": false
+  },
+  "availability": {}
+}
