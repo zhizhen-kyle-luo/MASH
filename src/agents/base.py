@@ -35,25 +35,22 @@ class BaseAgent(ABC):
         pass
     
     def parse_agent_tags(self, content: str) -> Optional[str]:
-        """Extract @AgentName tags from content to determine routing"""
         import re
         pattern = r'@(UrgentCare|Insurance|Coordinator):'
         match = re.search(pattern, content)
         return match.group(1) if match else None
-    
+
     def format_context(self, state: GraphState) -> str:
-        """Format relevant context for the agent"""
         recent_messages = state["messages"][-5:] if len(state["messages"]) > 5 else state["messages"]
         context_parts = []
-        
+
         for msg in recent_messages:
             if msg.agent and msg.agent != self.name:
                 context_parts.append(f"{msg.agent}: {msg.content}")
-                
+
         return "\n".join(context_parts) if context_parts else "No prior context."
-    
+
     def create_message(self, content: str, state: GraphState, role: str = "assistant") -> Message:
-        """Create a message object with proper metadata"""
         return Message(
             id=str(uuid.uuid4()),
             session_id=state.get("session_id", "default"),
@@ -64,8 +61,7 @@ class BaseAgent(ABC):
             content=content,
             timestamp=datetime.now()
         )
-    
+
     def should_end_conversation(self, content: str) -> bool:
-        """Check if conversation should end based on agent output"""
         end_markers = ["DONE", "plan confirmed", "session complete"]
         return any(marker.lower() in content.lower() for marker in end_markers)
