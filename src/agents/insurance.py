@@ -28,12 +28,10 @@ class InsuranceAgent(BaseAgent):
         self.policies = self._load_policies(policies_path)
         
     def _load_policies(self, path: str = None) -> dict:
-        """Load insurance policy rules from JSON file"""
         if path and Path(path).exists():
             with open(path, 'r') as f:
                 return json.load(f)
         else:
-            # Default simple rules for MVP
             return {
                 "CT": {
                     "in_network": {"default": "Approved"},
@@ -54,81 +52,73 @@ class InsuranceAgent(BaseAgent):
             }
     
     def process(self, state: GraphState) -> GraphState:
-        case_data = state["case_data"]
-        
-        # Extract the coverage request
+        patient_ehr = state.get("patient_ehr")
+
         recent_request = None
         for msg in reversed(state["messages"]):
             if "@Insurance:" in msg.content:
                 recent_request = msg.content.split("@Insurance:")[1].strip()
                 break
-        
+
         if not recent_request:
             recent_request = "Check coverage for proposed studies"
-        
-        # Get workup recommendations from context
+
         workup = state["internal_context"].get("workup_recommendations", "")
-        
-        # Determine the study type from workup
         study_type = self._extract_study_type(workup + " " + recent_request)
-        
-        # Check policy
-        is_in_network = case_data.insurance.get("in_network", True)
+
+        is_in_network = patient_ehr.insurance.get("in_network", True) if patient_ehr else True
         network_status = "in_network" if is_in_network else "out_network"
-        
+
         decision = "Not required"
         reason = "No prior authorization needed for this indication"
-        
+
         if study_type in self.policies:
             policy = self.policies[study_type].get(network_status, {})
             decision = policy.get("default", "Not required")
-            
+
             if decision == "Approved" and policy.get("requires_prior_auth"):
                 reason = f"Prior authorization approved for {study_type}"
             elif decision == "Denied":
                 reason = f"{study_type} denied for out-of-network provider"
             elif decision == "Not required":
                 reason = f"No prior authorization required for {study_type}"
-        
-        # Build context for LLM
+
         context = f"""
-        Insurance Plan: {case_data.insurance.get('plan', 'Standard')}
+        Insurance Plan: {patient_ehr.insurance.get('plan', 'Standard') if patient_ehr else 'Standard'}
         Network Status: {'In-network' if is_in_network else 'Out-of-network'}
         Requested Study: {study_type}
         Request: {recent_request}
-        
+
         Policy Decision: {decision}
         Reason: {reason}
-        
+
         Provide the decision in the specified format.
         """
-        
+
         messages = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=context)
         ]
-        
+
         response = self.llm.invoke(messages)
         content = response.content
-        
-        # Create message and update state
+
         message = self.create_message(content, state)
         state["messages"].append(message)
-        
+
         state["current_agent"] = self.name
         state["next_agent"] = "Concierge"
         state["turn_count"] += 1
-        
+
         state["internal_context"]["insurance_decision"] = decision
-        
+
         logger.info(f"Insurance provided decision: {decision} at turn {state['turn_count']}")
-        
+
         return state
     
     def _extract_study_type(self, text: str) -> str:
-        """Extract the type of study from text"""
         text_lower = text.lower()
-        
+
         if "ct" in text_lower or "computed tomography" in text_lower:
             return "CT"
         elif "ultrasound" in text_lower or "sonography" in text_lower:
