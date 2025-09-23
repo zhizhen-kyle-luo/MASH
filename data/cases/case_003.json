@@ -1,0 +1,33 @@
+{
+  "case_id": "case_003",
+  "demographics": {
+    "age": 28,
+    "sex": "F"
+  },
+  "chief_complaint": "I think I sprained my ankle yesterday while hiking. It's swollen and I can't put weight on it.",
+  "symptoms": [
+    "Ankle swelling",
+    "Pain with weight bearing",
+    "Limited range of motion",
+    "Bruising"
+  ],
+  "vitals": {
+    "temperature": "98.4°F",
+    "blood_pressure": "120/70",
+    "heart_rate": "75",
+    "respiratory_rate": "16"
+  },
+  "history": [
+    "No previous ankle injuries",
+    "Otherwise healthy",
+    "No medications"
+  ],
+  "insurance": {
+    "plan": "Aetna PPO",
+    "in_network": true
+  },
+  "constraints": {
+    "prefer_morning": true
+  },
+  "availability": {}
+}
