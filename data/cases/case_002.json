@@ -1,33 +1,43 @@
 {
-  "case_id": "case_002",
+  "patient_id": "PAT002",
   "demographics": {
     "age": 32,
-    "sex": "M"
+    "sex": "M",
+    "mrn": "MRN002345678"
   },
-  "chief_complaint": "I've had chest pain and shortness of breath for the last hour. I'm worried it might be my heart.",
-  "symptoms": [
-    "Chest pain",
-    "Shortness of breath",
-    "Sweating",
-    "Dizziness"
-  ],
   "vitals": {
     "temperature": "98.6°F",
     "blood_pressure": "160/95",
     "heart_rate": "110",
-    "respiratory_rate": "22"
+    "respiratory_rate": "22",
+    "oxygen_saturation": "97%",
+    "weight": "185 lbs",
+    "height": "5'11\""
   },
-  "history": [
-    "Father had heart attack at age 50",
-    "Smoker - 1 pack per day for 10 years",
-    "High cholesterol"
+  "medical_history": [
+    "Hyperlipidemia diagnosed 2019",
+    "Family history: Father MI at age 50",
+    "Social history: Tobacco use 1 PPD x 10 years",
+    "No known drug allergies",
+    "No prior hospitalizations"
   ],
   "insurance": {
-    "plan": "Kaiser HMO",
-    "in_network": false
+    "plan": "Kaiser Permanente HMO",
+    "member_id": "KP987654321",
+    "group_number": "GRP002",
+    "in_network": false,
+    "copay": "$40"
+  },
+  "emergency_contacts": {
+    "primary": {
+      "name": "Sarah Johnson",
+      "relationship": "Partner",
+      "phone": "(555) 987-6543"
+    }
   },
   "constraints": {
-    "prefer_morning": true
-  },
-  "availability": {}
+    "prefer_morning": true,
+    "language": "English",
+    "transportation": "Public transit"
+  }
 }

@@ -1,33 +1,41 @@
 {
-  "case_id": "case_001",
+  "patient_id": "PAT001",
   "demographics": {
     "age": 45,
-    "sex": "F"
+    "sex": "F",
+    "mrn": "MRN001234567"
   },
-  "chief_complaint": "I've been having sharp abdominal pain on the right side for the past 2 days. It's getting worse and I'm worried it might be my appendix.",
-  "symptoms": [
-    "Right-sided abdominal pain",
-    "Pain worsened with movement",
-    "Nausea",
-    "Low-grade fever"
-  ],
   "vitals": {
     "temperature": "100.2°F",
     "blood_pressure": "135/80",
     "heart_rate": "95",
-    "respiratory_rate": "18"
+    "respiratory_rate": "18",
+    "weight": "140 lbs",
+    "height": "5'6\""
   },
-  "history": [
+  "medical_history": [
     "No previous abdominal surgeries",
-    "No known allergies",
-    "Currently taking no medications"
+    "No known drug allergies",
+    "G2P2 (gravida 2, para 2)",
+    "Last menstrual period: 2 weeks ago"
   ],
   "insurance": {
-    "plan": "Blue Cross Blue Shield",
-    "in_network": true
+    "plan": "Blue Cross Blue Shield PPO",
+    "member_id": "BCBS123456789",
+    "group_number": "GRP001",
+    "in_network": true,
+    "copay": "$25"
+  },
+  "emergency_contacts": {
+    "primary": {
+      "name": "John Smith",
+      "relationship": "Spouse",
+      "phone": "(555) 123-4567"
+    }
   },
   "constraints": {
-    "prefer_morning": false
-  },
-  "availability": {}
+    "prefer_morning": false,
+    "language": "English",
+    "transportation": "Has own vehicle"
+  }
 }
