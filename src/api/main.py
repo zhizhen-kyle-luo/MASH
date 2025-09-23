@@ -24,7 +24,6 @@ workflow = None
 
 
 class ConsultationRequest(BaseModel):
-    """Request model for starting a consultation"""
     case_file: Optional[str] = Field(None, description="Path to case JSON file")
     case_data: Optional[Dict[str, Any]] = Field(None, description="Direct case data")
     chief_complaint: Optional[str] = Field(None, description="Chief complaint if not in case data")
@@ -32,7 +31,6 @@ class ConsultationRequest(BaseModel):
 
 
 class ConsultationResponse(BaseModel):
-    """Response model for consultation"""
     session_id: str
     status: str
     final_plan: Optional[Dict[str, Any]]
@@ -43,7 +41,6 @@ class ConsultationResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the workflow on startup"""
     global workflow
     workflow = MASHWorkflow()
     logger.info("MASH workflow initialized")
@@ -65,7 +62,6 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
@@ -74,20 +70,17 @@ async def start_consultation(
     request: ConsultationRequest,
     background_tasks: BackgroundTasks
 ):
-    """Start a new consultation workflow"""
     try:
-        # Load case data
         if request.case_file:
             case_path = Path(request.case_file)
             if not case_path.exists():
                 raise HTTPException(status_code=404, detail=f"Case file not found: {request.case_file}")
-            
+
             with open(case_path, 'r') as f:
                 case_data = json.load(f)
         elif request.case_data:
             case_data = request.case_data
         else:
-            # Create minimal case from chief complaint
             case_data = {
                 "case_id": f"auto_{request.session_id[:8]}",
                 "demographics": {"age": 40, "sex": "U"},
@@ -99,11 +92,9 @@ async def start_consultation(
                 "constraints": {},
                 "availability": {}
             }
-        
-        # Create patient case
+
         patient_case = PatientCase(**case_data)
-        
-        # Initialize state
+
         initial_state: GraphState = {
             "messages": [],
             "case_data": patient_case,
@@ -116,8 +107,7 @@ async def start_consultation(
             "internal_context": {},
             "session_id": request.session_id
         }
-        
-        # Add initial user message with chief complaint
+
         initial_message = Message(
             id=str(uuid.uuid4()),
             session_id=request.session_id,
@@ -128,26 +118,21 @@ async def start_consultation(
             timestamp=datetime.now()
         )
         initial_state["messages"].append(initial_message)
-        
-        # Initialize transcript logger
+
         transcript_logger = TranscriptLogger(request.session_id)
-        
-        # Run workflow
+
         logger.info(f"Starting consultation for session {request.session_id}")
         final_state = workflow.run(initial_state)
-        
-        # Log all messages to transcript
+
         for msg in final_state["messages"]:
             transcript_logger.log_message(msg.dict())
-        
-        # Prepare response
+
         transcript = [msg.dict() for msg in final_state["messages"]]
-        
-        # Extract final plan from last Concierge message
+
         final_plan = None
         for msg in reversed(final_state["messages"]):
             if msg.agent == "Concierge" and any(
-                keyword in msg.content.lower() 
+                keyword in msg.content.lower()
                 for keyword in ["plan", "recommend", "schedule", "next step"]
             ):
                 final_plan = {
@@ -157,7 +142,7 @@ async def start_consultation(
                     "appointment": final_state["internal_context"].get("scheduled_appointment")
                 }
                 break
-        
+
         return ConsultationResponse(
             session_id=request.session_id,
             status="completed",
@@ -166,7 +151,7 @@ async def start_consultation(
             turn_count=final_state["turn_count"],
             workflow_status=final_state["workflow_status"]
         )
-        
+
     except Exception as e:
         logger.error(f"Consultation error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,13 +159,12 @@ async def start_consultation(
 
 @app.get("/transcript/{session_id}")
 async def get_transcript(session_id: str):
-    """Retrieve a session transcript"""
     transcript_logger = TranscriptLogger(session_id)
     transcript = transcript_logger.get_transcript()
-    
+
     if not transcript:
         raise HTTPException(status_code=404, detail=f"Transcript not found for session {session_id}")
-    
+
     return {
         "session_id": session_id,
         "transcript": transcript,
