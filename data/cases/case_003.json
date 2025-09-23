@@ -1,33 +1,42 @@
 {
-  "case_id": "case_003",
+  "patient_id": "PAT003",
   "demographics": {
     "age": 28,
-    "sex": "F"
+    "sex": "F",
+    "mrn": "MRN003456789"
   },
-  "chief_complaint": "I think I sprained my ankle yesterday while hiking. It's swollen and I can't put weight on it.",
-  "symptoms": [
-    "Ankle swelling",
-    "Pain with weight bearing",
-    "Limited range of motion",
-    "Bruising"
-  ],
   "vitals": {
     "temperature": "98.4°F",
     "blood_pressure": "120/70",
     "heart_rate": "75",
-    "respiratory_rate": "16"
+    "respiratory_rate": "16",
+    "weight": "125 lbs",
+    "height": "5'4\""
   },
-  "history": [
-    "No previous ankle injuries",
-    "Otherwise healthy",
-    "No medications"
+  "medical_history": [
+    "No significant past medical history",
+    "No previous orthopedic injuries",
+    "No known drug allergies",
+    "No current medications",
+    "Active lifestyle - regular hiking"
   ],
   "insurance": {
-    "plan": "Aetna PPO",
-    "in_network": true
+    "plan": "Aetna Better Health PPO",
+    "member_id": "AET456789123",
+    "group_number": "GRP003",
+    "in_network": true,
+    "copay": "$20"
+  },
+  "emergency_contacts": {
+    "primary": {
+      "name": "Maria Gonzalez",
+      "relationship": "Sister",
+      "phone": "(555) 456-7890"
+    }
   },
   "constraints": {
-    "prefer_morning": true
-  },
-  "availability": {}
+    "prefer_morning": true,
+    "language": "English",
+    "transportation": "Has own vehicle"
+  }
 }
