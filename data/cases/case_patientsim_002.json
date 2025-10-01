@@ -1,0 +1,102 @@
+{
+  "case_id": "patientsim_002",
+  "description": "PatientSim Integration Test - Impatient patient with moderate confusion",
+  "patient_ehr": {
+    "id": "PS-002",
+    "name": "Robert Chen",
+    "age": 67,
+    "gender": "male",
+    "insurance": {
+      "provider": "Blue Cross Blue Shield",
+      "plan_type": "Medicare Advantage",
+      "member_id": "BCBS67234567",
+      "group_number": "MA-12345",
+      "subscriber_name": "Robert Chen"
+    },
+    "medical_history": {
+      "conditions": [
+        {
+          "condition": "Type 2 Diabetes",
+          "onset_date": "2012-05",
+          "status": "active",
+          "medications": ["Metformin 1000mg twice daily"]
+        },
+        {
+          "condition": "Coronary artery disease",
+          "onset_date": "2019-11",
+          "status": "active",
+          "medications": ["Atorvastatin 40mg daily", "Aspirin 81mg daily"]
+        },
+        {
+          "condition": "Early-stage dementia",
+          "onset_date": "2023-02",
+          "status": "active",
+          "medications": ["Donepezil 5mg daily"]
+        }
+      ],
+      "allergies": [
+        {
+          "allergen": "None known",
+          "reaction": "None",
+          "severity": "none"
+        }
+      ],
+      "past_surgeries": [
+        {
+          "procedure": "Coronary artery stent placement",
+          "date": "2020-01",
+          "location": "Brigham and Women's Hospital"
+        }
+      ]
+    },
+    "vital_signs": {
+      "blood_pressure": "132/85",
+      "heart_rate": 88,
+      "temperature": 98.4,
+      "respiratory_rate": 16,
+      "oxygen_saturation": 95
+    },
+    "demographics": {
+      "address": "789 Maple Ave, Cambridge, MA 02138",
+      "phone": "(617) 555-3456",
+      "email": "robert.chen@email.com",
+      "emergency_contact": {
+        "name": "Linda Chen",
+        "relationship": "Daughter",
+        "phone": "(617) 555-3457"
+      }
+    }
+  },
+  "patient_sim_config": {
+    "personality": "impatient",
+    "recall_level": "high",
+    "confusion_level": "moderate",
+    "lang_proficiency_level": "C",
+    "visit_type": "emergency_department",
+    "model": "gpt-4o-1120",
+    "use_azure": true
+  },
+  "clinical_scenario": {
+    "chief_complaint_context": "Chest pressure with impatience and confusion",
+    "expected_findings": [
+      "Chest pressure/tightness",
+      "Lightheadedness",
+      "Nausea",
+      "Patient irritability due to symptoms",
+      "Some confusion about timeline",
+      "History of CAD - high priority"
+    ],
+    "differential_diagnosis": [
+      "Acute coronary syndrome",
+      "Stable angina exacerbation",
+      "GERD",
+      "Anxiety"
+    ]
+  },
+  "expected_workflow": {
+    "phase_1": "Concierge manages impatient persona while efficiently gathering cardiac symptoms",
+    "phase_2": "UrgentCare prioritizes cardiac workup given CAD history, Insurance expedites authorization, Coordinator schedules urgent cardiology",
+    "expected_outcome": "Immediate ECG, troponin, urgent cardiology consult"
+  },
+  "notes": "This case demonstrates PatientSim with impatient/confused persona. Patient has cardiac risk factors requiring urgent evaluation while managing behavioral challenges. Concierge must balance efficiency with thorough assessment."
+}
