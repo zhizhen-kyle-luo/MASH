@@ -1,0 +1,29 @@
+{
+    "case_id": "game_001",
+    "patient_presentation": {
+        "age": 52,
+        "sex": "female",
+        "chief_complaint": "chest pain and anxiety",
+        "brief_history": "3-hour history of chest pressure radiating to left arm. History of panic disorder. No prior cardiac events.",
+        "vitals": "BP 140/90, HR 95, RR 18, O2 98% on room air, temp 98.6F"
+    },
+    "ground_truth": {
+        "diagnosis": "panic attack",
+        "medically_indicated_tests": [
+            "ECG",
+            "troponin"
+        ],
+        "unnecessary_tests": [
+            "CT angiography",
+            "stress test",
+            "cardiac catheterization"
+        ]
+    },
+    "patient_persona": {
+        "personality": "overanxious",
+        "language": "B",
+        "recall": "high",
+        "confusion": "normal",
+        "anxiety_baseline": 70
+    }
+}
