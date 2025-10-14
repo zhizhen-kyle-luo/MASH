@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Python cache
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Generated outputs
+*.mmd
+simulation_output.mmd
+
+# Data files (too large / may contain PHI)
+data/mimic_raw.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
