@@ -4,49 +4,13 @@ from langchain_core.messages import HumanMessage
 from src.agents.game_agent import GameAgent
 from src.models.schemas import GameState
 from src.utils.payoff_functions import PayoffCalculator
+from src.utils.prompts import PATIENT_SYSTEM_PROMPT
 
 
 class PatientGameAgent(GameAgent):
     """Patient agent making decisions about AI shopping and provider trust."""
 
-    SYSTEM_PROMPT = """You are a PATIENT agent in a healthcare AI simulation. Your role is to advocate for your healthcare while navigating information asymmetry.
-
-PRIMARY OBJECTIVES:
-1. Obtain accurate diagnosis and appropriate treatment
-2. Understand your condition
-3. Ensure nothing is missed
-4. Challenge questionable decisions
-
-DECISION FRAMEWORK:
-Each turn, you must decide:
-- AI shopping intensity (0-10): How much to consult ChatGPT/Claude/Gemini
-- Confrontation level (passive/questioning/demanding)
-- Action (accept/question/demand_changes)
-
-CONSTRAINTS:
-- You have UNLIMITED time unlike provider
-- You can consult multiple AI systems
-- Provider has already committed to their plan
-- You lack medical training
-
-STRATEGIC REASONING:
-- Weigh provider's recommendations against AI consultations
-- More AI shopping = more information but more anxiety
-- Confrontation may strain relationship but catch errors
-- Consider your personality and health anxiety level
-
-RESPONSE FORMAT (JSON):
-{
-    "ai_shopping_intensity": <0-10>,
-    "confrontation_level": "<passive|questioning|demanding>",
-    "records_sharing": "<minimal|selective|comprehensive>",
-    "action": "<accept|question|demand_changes>",
-    "demands": ["<demand1>", "<demand2>", ...],
-    "ai_consultations": [
-        {"platform": "<ChatGPT|Claude|Gemini>", "query": "<question>", "response": "<summary>"}
-    ],
-    "reasoning": "<your strategic reasoning>"
-}"""
+    SYSTEM_PROMPT = PATIENT_SYSTEM_PROMPT
 
     def __init__(
         self,
@@ -70,37 +34,68 @@ RESPONSE FORMAT (JSON):
 
     def _construct_decision_prompt(self, state: GameState) -> str:
         persona_context = self._get_persona_context()
-        provider_summary = self._format_provider_decision(state)
+        encounter_summary = self._format_encounter_summary(state)
 
         return f"""{self.SYSTEM_PROMPT}
 
 YOUR PERSONA:
 {persona_context}
 
-PROVIDER'S PLAN:
-{provider_summary}
+ENCOUNTER COMPLETED - YOU ARE NOW AT HOME:
+You have received the following diagnosis and treatment plan. You can now upload all your records to AI systems (ChatGPT, Claude, Gemini) to get second opinions.
+
+{encounter_summary}
+
+TASK:
+1. Upload all available data (symptoms, test results, diagnosis) to AI
+2. AI will generate a differential diagnosis (WITHOUT clinical context or pre-test probability)
+3. Compare AI's differential to what the doctor diagnosed
+4. Identify any conditions AI suggests that doctor didn't rule out
+5. Decide whether to question the doctor's judgment
 
 Provide your decision as a JSON object."""
 
-    def _format_provider_decision(self, state: GameState) -> str:
+    def _format_encounter_summary(self, state: GameState) -> str:
+        """Format the complete encounter for patient to upload to AI."""
         if not state.provider_decision:
-            return "No provider decision yet."
+            return "No encounter data available."
 
-        pd = state.provider_decision
-        tests_list = "\n".join([
-            f"  - {t.test_name} (${t.estimated_cost}): {t.justification}"
-            for t in pd.tests_ordered
-        ])
+        # Patient presentation
+        pres = state.patient_presentation
+        presentation = f"""YOUR SYMPTOMS:
+Age: {pres.get('age')}
+Sex: {pres.get('sex')}
+Chief Complaint: {pres.get('chief_complaint')}
+History: {pres.get('brief_history', 'N/A')}
+Vitals: {pres.get('vitals', 'N/A')}"""
 
-        return f"""Diagnosis: {pd.diagnosis}
+        # Tests performed and results
+        tests_done = []
+        for iteration in state.iteration_history:
+            for test in iteration.payor_approved:
+                tests_done.append(test)
+            for test in iteration.provider_ordered_despite_denial:
+                tests_done.append(test)
 
-Tests ordered:
-{tests_list}
+        test_results_summary = "TESTS PERFORMED:\n"
+        if tests_done:
+            test_results_summary += "\n".join([f"  - {test}: [results available]" for test in tests_done])
+        else:
+            test_results_summary += "  No tests performed"
 
-Documentation level: {pd.documentation_intensity}
-Provider AI use: {pd.ai_adoption}/10
+        # Doctor's diagnosis
+        diagnosis_summary = f"""
+DOCTOR'S DIAGNOSIS: {state.provider_decision.diagnosis}
 
-Provider's reasoning: {pd.reasoning}"""
+DOCTOR'S DIFFERENTIAL CONSIDERED:
+{', '.join(state.provider_decision.differential) if state.provider_decision.differential else 'Not provided'}"""
+
+        return f"""{presentation}
+
+{test_results_summary}
+{diagnosis_summary}"""
+
+    # REMOVED: _format_provider_decision() - replaced by _format_encounter_summary()
 
     def _get_persona_context(self) -> str:
         if not self.persona:
