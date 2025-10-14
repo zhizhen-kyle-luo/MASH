@@ -1,57 +1,31 @@
-#AI generated, generic for now, will clean up later
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+# Environment variables
+.env
 
-# Virtual Environment
+# Python cache
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
 venv/
 ENV/
-env/
-.venv/
+
+# Generated outputs
+*.mmd
+simulation_output.mmd
+
+# Data files (too large / may contain PHI)
+data/mimic_raw.json
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+
+# OS
 .DS_Store
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Logs and transcripts
-*.log
-transcripts/*.jsonl
-transcripts/*.json
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.mypy_cache/
-.ruff_cache/
-pip-log.
+Thumbs.db
