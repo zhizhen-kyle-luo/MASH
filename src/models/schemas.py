@@ -40,8 +40,8 @@ class ClinicalSummary(BaseModel):
 
 class GraphState(TypedDict):
     messages: List[Message]
-    patient_ehr: PatientEHR  # Structured EHR data
-    clinical_summary: Optional[ClinicalSummary]  # Clinical narrative from Concierge
+    patient_ehr: PatientEHR
+    clinical_summary: Optional[ClinicalSummary]
     current_agent: str
     next_agent: Optional[str]
     turn_count: int
@@ -49,4 +49,106 @@ class GraphState(TypedDict):
     workflow_status: Literal["active", "done", "error"]
     current_plan: Optional[Dict[str, Any]]
     internal_context: Dict[str, Any]
-    conversation_history: List[str]  # For building clinical summary
+    conversation_history: List[str]
+
+
+class TestOrdered(BaseModel):
+    test_name: str
+    cpt_code: Optional[str] = None
+    rationale: Optional[str] = None
+
+
+class ProviderDecision(BaseModel):
+    diagnosis: str
+    differential: List[str] = Field(default_factory=list)
+    tests_ordered: List[TestOrdered] = Field(default_factory=list)
+    documentation_intensity: int = Field(ge=0, le=10, default=5)
+    ai_adoption: int = Field(ge=0, le=10, default=5)
+    reasoning: Optional[str] = None
+
+
+class PatientDecision(BaseModel):
+    ai_shopping_intensity: int = Field(ge=0, le=10, default=0)
+    confrontation_level: Literal["passive", "questioning", "demanding"] = "passive"
+    records_sharing: Literal["full", "selective", "minimal"] = "full"
+    concerns: List[str] = Field(default_factory=list)
+    ai_second_opinions: List[str] = Field(default_factory=list)
+
+
+class PayorDecision(BaseModel):
+    ai_review_intensity: int = Field(ge=0, le=10, default=5)
+    approved_tests: List[str] = Field(default_factory=list)
+    denied_tests: List[str] = Field(default_factory=list)
+    denial_reasons: Dict[str, str] = Field(default_factory=dict)
+    reimbursement_percentage: float = Field(ge=0.0, le=1.0, default=1.0)
+    # Phase 2: Retrospective review
+    retrospective_denials: List[str] = Field(default_factory=list)  # Tests approved in Phase 1 but denied reimbursement in Phase 2
+    retrospective_reasoning: Optional[str] = None
+
+
+class LawyerDecision(BaseModel):
+    ai_analysis_intensity: int = Field(ge=0, le=10, default=5)
+    malpractice_detected: bool = False
+    liability_assessment: Literal["none", "potential", "clear"] = "none"
+    missed_diagnoses: List[str] = Field(default_factory=list)
+    standard_of_care_violations: List[str] = Field(default_factory=list)
+    litigation_recommendation: Literal["none", "demand_letter", "lawsuit"] = "none"
+
+
+class IterationRecord(BaseModel):
+    iteration_number: int
+    provider_tests_ordered: List[TestOrdered] = Field(default_factory=list)
+    payor_approved: List[str] = Field(default_factory=list)
+    payor_denied: List[str] = Field(default_factory=list)
+    provider_appeals: Dict[str, str] = Field(default_factory=dict)
+    provider_ordered_despite_denial: List[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    differential: List[str] = Field(default_factory=list)
+    workup_completeness: float = Field(ge=0.0, le=1.0, default=0.0)
+    reasoning: Optional[str] = None
+
+
+class AgentMetrics(BaseModel):
+    provider: Dict[str, Any] = Field(default_factory=dict)
+    patient: Dict[str, Any] = Field(default_factory=dict)
+    payor: Dict[str, Any] = Field(default_factory=dict)
+    lawyer: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CollectiveMetrics(BaseModel):
+    total_system_cost: float = 0.0
+    overall_trust_index: float = 0.5
+    defensive_cascade: bool = False
+    equilibrium_type: Literal["cooperative", "competitive"] = "cooperative"
+
+
+class GameState(BaseModel):
+    case_id: str
+    patient_presentation: Dict[str, Any]
+    ground_truth_diagnosis: str
+    medically_indicated_tests: List[str]
+
+    # Test results that accumulate during Phase 1
+    available_test_results: Dict[str, Any] = Field(default_factory=dict)  # lab_tests, radiology_reports from MIMIC
+    accumulated_test_results: List[str] = Field(default_factory=list)  # Tests performed and results received
+
+    provider_decision: Optional[ProviderDecision] = None
+    patient_decision: Optional[PatientDecision] = None
+    payor_decision: Optional[PayorDecision] = None
+    lawyer_decision: Optional[LawyerDecision] = None
+
+    iteration_history: List[IterationRecord] = Field(default_factory=list)
+    current_confidence: float = Field(ge=0.0, le=1.0, default=0.3)
+    max_iterations: int = Field(default=10)
+    stopping_reason: Optional[Literal["confidence_threshold", "max_iterations", "workup_complete"]] = None
+
+    diagnostic_accuracy: bool = False
+    defensive_medicine_index: float = 0.0
+
+    provider_payoff: float = 0.0
+    patient_payoff: float = 0.0
+    payor_payoff: float = 0.0
+    lawyer_payoff: float = 0.0
+
+    agent_metrics: Optional[AgentMetrics] = None
+    collective_metrics: Optional[CollectiveMetrics] = None
