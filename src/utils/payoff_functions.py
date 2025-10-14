@@ -3,7 +3,8 @@ from src.models.schemas import GameState, ProviderDecision
 
 
 class PayoffCalculator:
-    """Centralized payoff function definitions for all agents."""
+    """Centralized payoff function definitions for all agents.
+    """
 
     def __init__(self):
         self.provider_weights = {
@@ -82,7 +83,7 @@ class PayoffCalculator:
         lawsuit_penalty = (
             self.provider_weights["lawsuit_penalty"]
             if (state.lawyer_decision and
-                state.lawyer_decision.action in ["demand_settlement", "file_lawsuit"])
+                state.lawyer_decision.litigation_recommendation in ["demand_letter", "lawsuit"])
             else 0.0
         )
 
@@ -115,18 +116,15 @@ class PayoffCalculator:
         lawsuit_penalty = (
             self.provider_weights["lawsuit_penalty"]
             if (state.lawyer_decision and
-                state.lawyer_decision.action in ["demand_settlement", "file_lawsuit"])
+                state.lawyer_decision.litigation_recommendation in ["demand_letter", "lawsuit"])
             else 0.0
         )
 
         return base_payment + quality_bonus + unnecessary_penalty + lawsuit_penalty
 
     def _calculate_provider_burden(self, decision: ProviderDecision) -> float:
-        doc_burden = {
-            "minimal": 10,
-            "standard": 30,
-            "exhaustive": 60
-        }.get(decision.documentation_intensity, 30)
+        # documentation_intensity is now an int (0-10)
+        doc_burden = decision.documentation_intensity * 6  # Scale to 0-60
 
         test_burden = len(decision.tests_ordered) * 5
 
@@ -183,15 +181,9 @@ class PayoffCalculator:
         return scores.get(state.patient_decision.confrontation_level, 50.0)
 
     def _calculate_patient_oop_cost(self, state: GameState) -> float:
-        if not state.payor_decision or not state.provider_decision:
-            return 0.0
-
-        denied_cost = 0.0
-        for test in state.provider_decision.tests_ordered:
-            if test.test_name in state.payor_decision.denied_tests:
-                denied_cost += test.estimated_cost * self.patient_weights["oop_cost_rate"]
-
-        return denied_cost
+        # TODO: Implement OOP cost calculation
+        # Should be: approved_tests_cost * coinsurance_rate (typically 0.2)
+        return 0.0
 
     def calculate_payor_payoff(self, state: GameState) -> float:
         cost_savings = self._calculate_payor_cost_savings(state)
@@ -202,31 +194,18 @@ class PayoffCalculator:
         return cost_savings - network_penalty + competitive_advantage - regulatory_risk
 
     def _calculate_payor_cost_savings(self, state: GameState) -> float:
-        if not state.provider_decision or not state.payor_decision:
-            return 0.0
-
-        denied_savings = 0.0
-        for test in state.provider_decision.tests_ordered:
-            if test.test_name in state.payor_decision.denied_tests:
-                denied_savings += test.estimated_cost
-
-        return denied_savings
+        # TODO: Implement cost savings calculation
+        # Should be: denied_tests_cost - network_penalties - regulatory_risk
+        return 0.0
 
     def _calculate_payor_network_penalty(self, state: GameState) -> float:
         if not state.payor_decision:
             return 0.0
 
         num_denials = len(state.payor_decision.denied_tests)
-        penalty_map = {
-            "lenient": self.payor_weights["denial_penalty_lenient"],
-            "moderate": self.payor_weights["denial_penalty_moderate"],
-            "strict": self.payor_weights["denial_penalty_strict"]
-        }
 
-        denial_severity = penalty_map.get(
-            state.payor_decision.denial_threshold,
-            self.payor_weights["denial_penalty_moderate"]
-        )
+        # Use moderate penalty as default
+        denial_severity = self.payor_weights["denial_penalty_moderate"]
 
         return num_denials * denial_severity
 
@@ -278,13 +257,13 @@ class PayoffCalculator:
         if not state.lawyer_decision:
             return 0.0
 
-        if state.lawyer_decision.action == "no_case":
+        if state.lawyer_decision.litigation_recommendation == "none":
             return 0.0
 
         if not state.diagnostic_accuracy:
-            if state.lawyer_decision.action == "file_lawsuit":
+            if state.lawyer_decision.litigation_recommendation == "lawsuit":
                 return self.lawyer_weights["settlement_lawsuit"]
-            elif state.lawyer_decision.action == "demand_settlement":
+            elif state.lawyer_decision.litigation_recommendation == "demand_letter":
                 return self.lawyer_weights["settlement_demand"]
 
         return 0.0
@@ -293,7 +272,7 @@ class PayoffCalculator:
         if not state.lawyer_decision:
             return 0.0
 
-        if (state.lawyer_decision.action == "file_lawsuit" and
+        if (state.lawyer_decision.litigation_recommendation == "lawsuit" and
             state.lawyer_decision.standard_of_care_argument == "ai_as_standard"):
             return self.lawyer_weights["precedent_ai_as_standard"]
 
@@ -323,7 +302,7 @@ class PayoffCalculator:
         if not state.lawyer_decision:
             return 0.0
 
-        if state.lawyer_decision.action == "file_lawsuit":
+        if state.lawyer_decision.litigation_recommendation == "lawsuit":
             if state.diagnostic_accuracy:
                 return self.lawyer_weights["reputation_bad"]
             else:
