@@ -4,49 +4,13 @@ from langchain_core.messages import HumanMessage
 from src.agents.game_agent import GameAgent
 from src.models.schemas import GameState
 from src.utils.payoff_functions import PayoffCalculator
+from src.utils.prompts import LAWYER_SYSTEM_PROMPT
 
 
 class LawyerAgent(GameAgent):
     """Plaintiff's attorney evaluating malpractice opportunities."""
 
-    SYSTEM_PROMPT = """You are a LAWYER agent in a healthcare AI simulation. Your role is to identify malpractice cases and establish AI as the standard of care.
-
-PRIMARY OBJECTIVES:
-1. Identify viable malpractice cases
-2. Maximize settlements
-3. Establish legal precedents around AI standards
-4. Build case database for future litigation
-
-DECISION FRAMEWORK:
-Each turn, you must decide:
-- AI analysis intensity (0-10): How thoroughly to analyze with legal AI
-- Litigation strategy (selective/moderate/opportunistic)
-- Standard of care argument (traditional/ai_augmented/ai_as_standard)
-- Action (no_case/demand_settlement/file_lawsuit)
-
-CONSTRAINTS:
-- You review with PERFECT HINDSIGHT after outcome known
-- You compare provider actions to "what AI would have done"
-- Losing cases damages reputation
-- Aggressive litigation may trigger coordination against you
-
-STRATEGIC REASONING:
-- Monitor provider AI adoption (lower use = more opportunities)
-- Track payor AI use for coverage denial cases
-- Evaluate if AI-as-standard arguments gain legal traction
-- Consider if excessive litigation triggers coordination against you
-- Balance short-term cases vs long-term precedent value
-
-RESPONSE FORMAT (JSON):
-{
-    "ai_analysis_intensity": <0-10>,
-    "litigation_strategy": "<selective|moderate|opportunistic>",
-    "standard_of_care_argument": "<traditional|ai_augmented|ai_as_standard>",
-    "malpractice_detected": <true|false>,
-    "action": "<no_case|demand_settlement|file_lawsuit>",
-    "case_evaluation": "<detailed evaluation of malpractice elements>",
-    "reasoning": "<your strategic reasoning>"
-}"""
+    SYSTEM_PROMPT = LAWYER_SYSTEM_PROMPT
 
     def __init__(self, llm, config: Dict[str, Any] = None):
         super().__init__(llm, "Lawyer", config)
@@ -117,14 +81,14 @@ Denial reasons: {state.payor_decision.denial_reasons}"""
 
         pd = state.provider_decision
         tests_list = "\n".join([
-            f"  - {t.test_name} (${t.estimated_cost})"
+            f"  - {t.test_name}{f' ({t.cpt_code})' if t.cpt_code else ''}"
             for t in pd.tests_ordered
         ])
 
         return f"""AI adoption: {pd.ai_adoption}/10
-Documentation: {pd.documentation_intensity}
-Testing approach: {pd.testing_approach}
+Documentation intensity: {pd.documentation_intensity}/10
 Diagnosis: {pd.diagnosis}
+Differential: {', '.join(pd.differential) if pd.differential else 'None provided'}
 
 Tests ordered:
 {tests_list}"""
@@ -186,7 +150,7 @@ Standard of care arguments:
             "cases_identified": 1.0 if ld.malpractice_detected else 0.0,
             "settlements_won": self.payoff_calculator._calculate_lawyer_settlement(state),
             "precedents_established": 1.0 if (
-                ld.action == "file_lawsuit" and
+                ld.litigation_recommendation == "lawsuit" and
                 ld.standard_of_care_argument == "ai_as_standard"
             ) else 0.0,
             "database_value": self.payoff_calculator._calculate_lawyer_database(state)
