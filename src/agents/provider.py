@@ -2,54 +2,16 @@ from typing import Dict, Any, List
 import json
 from langchain_core.messages import HumanMessage
 from src.agents.game_agent import GameAgent
-from src.models.schemas import GameState, ProviderDecision, DiagnosticOrder
+from src.models.schemas import GameState, ProviderDecision, TestOrdered
 from src.utils.cpt_calculator import CPTCostCalculator
 from src.utils.payoff_functions import PayoffCalculator
+from src.utils.prompts import PROVIDER_SYSTEM_PROMPT, PROVIDER_CONFIDENCE_GUIDELINES
 
 
 class ProviderAgent(GameAgent):
     """Provider agent making clinical decisions under pressure."""
 
-    SYSTEM_PROMPT = """You are a PROVIDER agent in a healthcare AI simulation. Your role is to make clinical decisions while managing competing pressures.
-
-PRIMARY OBJECTIVES:
-1. Deliver quality patient care
-2. Avoid malpractice liability
-3. Maintain financial viability
-4. Preserve clinical autonomy
-
-DECISION FRAMEWORK:
-Each turn, you must decide:
-- AI adoption level (0-10): How much AI to use for documentation and diagnosis
-- Documentation intensity (minimal/standard/exhaustive)
-- Testing approach (conservative/moderate/aggressive)
-
-CONSTRAINTS:
-- You move FIRST with incomplete information and time pressure
-- All other agents can retrospectively analyze your decisions
-- Higher AI use = more findings detected = more documentation/follow-up burden
-- Lower AI use = potential missed findings = liability risk
-
-STRATEGIC REASONING:
-- Monitor other agents' AI adoption levels
-- Anticipate payor denials based on their AI usage patterns
-- Adjust to patient expectations and demands
-- Consider temporal asymmetry: you decide now, they review later
-- Track whether cooperation or competition is prevailing
-
-RESPONSE FORMAT (JSON):
-{
-    "ai_adoption": <0-10>,
-    "documentation_intensity": "<minimal|standard|exhaustive>",
-    "testing_approach": "<conservative|moderate|aggressive>",
-    "diagnosis": "<your clinical diagnosis>",
-    "tests_ordered": [
-        {"test_name": "<name>", "justification": "<reason>"},
-        ...
-    ],
-    "documentation_notes": "<clinical notes>",
-    "reasoning": "<your strategic reasoning>"
-}"""
+    SYSTEM_PROMPT = PROVIDER_SYSTEM_PROMPT
 
     def __init__(
         self,
@@ -63,33 +25,8 @@ RESPONSE FORMAT (JSON):
         self.payoff_calculator = PayoffCalculator()
 
     def make_decision(self, state: GameState) -> Dict[str, Any]:
-        prompt = self._construct_decision_prompt(state)
-        messages = [HumanMessage(content=prompt)]
-        response = self.llm.invoke(messages)
-
-        decision_dict = self._parse_response(response.content)
-        return self._enrich_with_cpt_codes(decision_dict)
-
-    def _construct_decision_prompt(self, state: GameState) -> str:
-        payment_context = self._get_payment_model_context()
-        game_context = self._format_game_context(state)
-
-        return f"""{self.SYSTEM_PROMPT}
-
-PAYMENT MODEL: {self.payment_model}
-{payment_context}
-
-{game_context}
-
-Provide your decision as a JSON object."""
-
-    def _get_payment_model_context(self) -> str:
-        if self.payment_model == "fee_for_service":
-            return """You earn revenue based on approved tests (70% of cost). More tests = more revenue.
-Risk: Payor may deny tests. Balance revenue opportunity with denial risk."""
-        else:
-            return """You receive fixed base payment plus quality bonus. Unnecessary tests penalize you.
-Risk: Missing diagnosis or ordering too few tests may lead to lawsuits."""
+        """Legacy method - not used. Use make_iterative_decision() instead."""
+        return {"error": "Use make_iterative_decision() for provider decisions"}
 
     def _format_game_context(self, state: GameState) -> str:
         presentation = state.patient_presentation
@@ -172,8 +109,139 @@ Vitals: {presentation.get('vitals', 'N/A')}"""
             "quality_score": 1.0 if state.diagnostic_accuracy else 0.0,
             "liability_events": 1.0 if (
                 state.lawyer_decision and
-                state.lawyer_decision.action in ["demand_settlement", "file_lawsuit"]
+                state.lawyer_decision.litigation_recommendation in ["demand_letter", "lawsuit"]
             ) else 0.0,
             "autonomy_preserved": (10 - state.provider_decision.ai_adoption) / 10.0,
             "burden_level": burden
         }
+
+    def make_iterative_decision(self, state: GameState, iteration: int) -> Dict[str, Any]:
+        """
+        Make decision in iterative encounter loop.
+
+        Returns dict with:
+        - tests_ordered: List[TestOrdered]
+        - differential: List[str]
+        - confidence: float (0-1)
+        - workup_completeness: float (0-1)
+        - diagnosis: str
+        - reasoning: str
+        """
+        prior_tests = []
+        for iter_record in state.iteration_history:
+            prior_tests.extend([t.test_name for t in iter_record.provider_tests_ordered])
+
+        prompt = f"""{self.SYSTEM_PROMPT}
+
+ITERATIVE DIAGNOSTIC SESSION - Iteration {iteration}/{state.max_iterations}
+
+PATIENT PRESENTATION:
+{self._format_game_context(state)}
+
+PRIOR ITERATIONS:
+{self._format_iteration_history(state.iteration_history)}
+
+TEST RESULTS RECEIVED SO FAR:
+{self._format_test_results(state.accumulated_test_results)}
+
+CURRENT CONFIDENCE: {state.current_confidence:.2f}
+
+{PROVIDER_CONFIDENCE_GUIDELINES}
+
+Your task: Analyze available test results. Order next round of tests to refine diagnosis. Update your confidence based on the guidelines above.
+
+RESPONSE FORMAT (JSON):
+{{
+    "tests_ordered": [
+        {{"test_name": "<name>", "rationale": "<reason>"}},
+        ...
+    ],
+    "differential": ["<diagnosis 1>", "<diagnosis 2>", ...],
+    "confidence": <0.0-1.0>,
+    "workup_completeness": <0.0-1.0>,
+    "diagnosis": "<primary diagnosis>",
+    "ai_adoption": <0-10>,
+    "reasoning": "<clinical reasoning>"
+}}
+
+If workup is complete and you are confident, return empty tests_ordered list."""
+
+        messages = [HumanMessage(content=prompt)]
+        response = self.llm.invoke(messages)
+
+        decision_dict = self._parse_response(response.content)
+        return self._enrich_with_cpt_codes(decision_dict)
+
+    def react_to_denials(
+        self,
+        state: GameState,
+        denied_tests: List[str],
+        denial_reasons: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """
+        React to payer denials.
+
+        Returns dict with:
+        - appeals: Dict[test_name, appeal_justification]
+        - order_anyway: List[test_name] (tests ordered despite denial)
+        """
+        prompt = f"""You are a PROVIDER reacting to PAYER denials.
+
+DENIED TESTS:
+{self._format_denials(denied_tests, denial_reasons)}
+
+CURRENT CASE:
+{self._format_game_context(state)}
+
+OPTIONS:
+1. APPEAL: Provide additional justification for medical necessity
+2. ORDER ANYWAY: Order test and "eat cost" (you pay out of pocket)
+3. ACCEPT: Move on without test
+
+STRATEGIC CONSIDERATIONS:
+- Appeals take time and may not succeed
+- Ordering anyway costs you money but protects against liability
+- Accepting denial may lead to missed diagnosis and lawsuit
+
+RESPONSE FORMAT (JSON):
+{{
+    "appeals": {{
+        "<test_name>": "<appeal justification>",
+        ...
+    }},
+    "order_anyway": ["<test_name>", ...],
+    "reasoning": "<strategic reasoning>"
+}}"""
+
+        messages = [HumanMessage(content=prompt)]
+        response = self.llm.invoke(messages)
+
+        return self._parse_response(response.content)
+
+    def _format_iteration_history(self, history: List) -> str:
+        if not history:
+            return "No prior iterations"
+
+        lines = []
+        for record in history:
+            lines.append(f"Iteration {record.iteration_number}:")
+            lines.append(f"  Tests ordered: {[t.test_name for t in record.provider_tests_ordered]}")
+            lines.append(f"  Approved: {record.payor_approved}")
+            lines.append(f"  Denied: {record.payor_denied}")
+            lines.append(f"  Confidence: {record.confidence:.2f}")
+            lines.append(f"  Differential: {record.differential}")
+        return "\n".join(lines)
+
+    def _format_denials(self, denied_tests: List[str], reasons: Dict[str, str]) -> str:
+        lines = []
+        for test in denied_tests:
+            reason = reasons.get(test, "No reason provided")
+            lines.append(f"- {test}: {reason}")
+        return "\n".join(lines)
+
+    def _format_test_results(self, accumulated_results: List[str]) -> str:
+        """Format accumulated test results for provider to analyze."""
+        if not accumulated_results:
+            return "No test results available yet (first iteration)"
+
+        return "\n".join([f"  - {result}" for result in accumulated_results])
