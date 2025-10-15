@@ -135,7 +135,8 @@ class StackelbergGameSimulation:
                 differential=[]
             )
 
-            provider_step = self.provider.make_iterative_decision(state, iteration)
+            provider_step = self.provider.make_iterative_decision(
+                state, iteration)
 
             # Convert test dicts to TestOrdered objects
             tests_ordered_dicts = provider_step.get("tests_ordered", [])
@@ -144,7 +145,8 @@ class StackelbergGameSimulation:
                 for test in tests_ordered_dicts
             ]
             iteration_record.provider_tests_ordered = tests_ordered
-            iteration_record.differential = provider_step.get("differential", [])
+            iteration_record.differential = provider_step.get(
+                "differential", [])
             iteration_record.reasoning = provider_step.get("reasoning", "")
 
             if len(iteration_record.provider_tests_ordered) == 0:
@@ -157,12 +159,14 @@ class StackelbergGameSimulation:
                 [t.test_name for t in iteration_record.provider_tests_ordered]
             )
 
-            iteration_record.payor_approved = payor_response.get("approved", [])
+            iteration_record.payor_approved = payor_response.get(
+                "approved", [])
             iteration_record.payor_denied = payor_response.get("denied", [])
 
             # Simulate getting test results for approved tests
             if len(iteration_record.payor_approved) > 0:
-                new_results = self._simulate_test_results(state, iteration_record.payor_approved)
+                new_results = self._simulate_test_results(
+                    state, iteration_record.payor_approved)
                 state.accumulated_test_results.extend(new_results)
 
             if len(iteration_record.payor_denied) > 0:
@@ -172,19 +176,24 @@ class StackelbergGameSimulation:
                     payor_response.get("denial_reasons", {})
                 )
 
-                iteration_record.provider_appeals = provider_reaction.get("appeals", {})
-                iteration_record.provider_ordered_despite_denial = provider_reaction.get("order_anyway", [])
+                iteration_record.provider_appeals = provider_reaction.get(
+                    "appeals", {})
+                iteration_record.provider_ordered_despite_denial = provider_reaction.get(
+                    "order_anyway", [])
 
                 # If provider ordered tests despite denial, they get results (but eat the cost)
                 if len(iteration_record.provider_ordered_despite_denial) > 0:
-                    denied_results = self._simulate_test_results(state, iteration_record.provider_ordered_despite_denial)
+                    denied_results = self._simulate_test_results(
+                        state, iteration_record.provider_ordered_despite_denial)
                     state.accumulated_test_results.extend(denied_results)
 
-            new_confidence = provider_step.get("confidence", state.current_confidence)
+            new_confidence = provider_step.get(
+                "confidence", state.current_confidence)
             iteration_record.confidence = new_confidence
             state.current_confidence = new_confidence
 
-            iteration_record.workup_completeness = provider_step.get("workup_completeness", 0.0)
+            iteration_record.workup_completeness = provider_step.get(
+                "workup_completeness", 0.0)
 
             state.iteration_history.append(iteration_record)
 
@@ -230,10 +239,13 @@ class StackelbergGameSimulation:
 
     def _calculate_outcomes(self, state: GameState) -> GameState:
         """Calculate diagnostic accuracy only. Defensive medicine calculation removed (was incorrect)."""
-        state.diagnostic_accuracy = (
-            state.provider_decision.diagnosis.lower() in
-            state.ground_truth_diagnosis.lower()
-        )
+        if state.provider_decision:
+            state.diagnostic_accuracy = (
+                state.provider_decision.diagnosis.lower() in
+                state.ground_truth_diagnosis.lower()
+            )
+        else:
+            state.diagnostic_accuracy = False
 
         # TODO: Implement proper defensive medicine calculation with clinical guidelines
         # Current approach was wrong - flagged evidence-based tests as defensive
@@ -268,7 +280,8 @@ class StackelbergGameSimulation:
         total_cost = self.cost_calculator.PHYSICIAN_VISIT_COST
         if state.payor_decision:
             for test_name in state.payor_decision.approved_tests:
-                total_cost += self.cost_calculator.calculate_test_cost(test_name)
+                total_cost += self.cost_calculator.calculate_test_cost(
+                    test_name)
 
         # Calculate average AI adoption
         ai_levels = [
@@ -284,7 +297,8 @@ class StackelbergGameSimulation:
         if state.payor_decision and state.provider_decision:
             total_tests = len(state.provider_decision.tests_ordered)
             denied = len(state.payor_decision.denied_tests)
-            overall_trust = 1.0 - (denied / total_tests) if total_tests > 0 else 0.5
+            overall_trust = 1.0 - \
+                (denied / total_tests) if total_tests > 0 else 0.5
         else:
             overall_trust = 0.5
 
