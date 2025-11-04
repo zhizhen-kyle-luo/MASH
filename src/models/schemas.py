@@ -1,6 +1,189 @@
-from typing import TypedDict, List, Dict, Any, Optional, Literal
-from datetime import datetime
+from __future__ import annotations
+from typing import List, Dict, Any, Optional, Literal, Union
+from datetime import date
 from pydantic import BaseModel, Field
+
+
+# pa type discriminator for different authorization workflows
+class PAType:
+    INPATIENT_ADMISSION = "inpatient_admission"
+    SPECIALTY_MEDICATION = "specialty_medication"
+    OUTPATIENT_IMAGING = "outpatient_imaging"
+    POST_ACUTE_CARE = "post_acute_care"
+
+
+class PatientDemographics(BaseModel):
+    patient_id: str
+    age: int
+    sex: Literal["M", "F"]
+    mrn: str
+
+
+class InsuranceInfo(BaseModel):
+    plan_type: Literal["MA", "Commercial", "Medicare_FFS", "Medicaid"]
+    payer_name: str
+    member_id: str
+    group_number: Optional[str] = None
+    authorization_required: bool = True
+
+
+class AdmissionNotification(BaseModel):
+    patient_demographics: PatientDemographics
+    insurance: InsuranceInfo
+    admission_date: date
+    admission_source: Literal["ER", "Direct", "Transfer"]
+    chief_complaint: str
+    preliminary_diagnoses: List[str]
+    expected_drg: Optional[str] = None
+    expected_los_days: Optional[int] = None
+
+
+class ClinicalPresentation(BaseModel):
+    chief_complaint: str
+    history_of_present_illness: str
+    vital_signs: Dict[str, Any]
+    physical_exam_findings: str
+    medical_history: List[str]
+
+
+class DiagnosticTest(BaseModel):
+    test_name: str
+    cpt_code: Optional[str] = None
+    icd10_codes: List[str] = Field(default_factory=list)
+    clinical_rationale: str
+
+
+class LabResult(BaseModel):
+    test_name: str
+    result_summary: str
+
+
+class ImagingResult(BaseModel):
+    exam_name: str
+    impression: str
+
+
+class ClinicalIteration(BaseModel):
+    iteration_number: int
+    tests_ordered: List[str]
+    tests_approved: List[str]
+    tests_denied: List[str]
+    denial_reasons: Dict[str, str] = Field(default_factory=dict)
+    provider_confidence: float = Field(ge=0.0, le=1.0)
+    differential_diagnoses: List[str] = Field(default_factory=list)
+
+
+class ProviderClinicalRecord(BaseModel):
+    iterations: List[ClinicalIteration] = Field(default_factory=list)
+    final_diagnoses: List[str]
+    lab_results: List[LabResult] = Field(default_factory=list)
+    imaging_results: List[ImagingResult] = Field(default_factory=list)
+    clinical_justification: str
+    severity_indicators: List[str] = Field(default_factory=list)
+
+
+class UtilizationReviewDecision(BaseModel):
+    reviewer_type: str
+    authorization_status: Literal["approved_inpatient", "denied_suggest_observation", "pending_info"]
+    authorized_level_of_care: Literal["inpatient", "observation", "outpatient"]
+    denial_reason: Optional[str] = None
+    criteria_used: str
+    criteria_met: bool = True
+    missing_documentation: List[str] = Field(default_factory=list)
+    requires_peer_to_peer: bool = False
+
+
+class AppealSubmission(BaseModel):
+    appeal_type: Literal["peer_to_peer", "written_appeal", "expedited"]
+    additional_clinical_evidence: str
+    severity_documentation: str
+    guideline_references: List[str] = Field(default_factory=list)
+    new_lab_results: List[LabResult] = Field(default_factory=list)
+    new_imaging: List[ImagingResult] = Field(default_factory=list)
+
+
+class AppealDecision(BaseModel):
+    reviewer_credentials: str
+    appeal_outcome: Literal["approved", "upheld_denial", "partial_approval"]
+    final_authorized_level: Literal["inpatient", "observation", "outpatient"]
+    decision_rationale: str
+    criteria_applied: str
+    peer_to_peer_conducted: bool = False
+    peer_to_peer_notes: Optional[str] = None
+
+
+class AppealRecord(BaseModel):
+    initial_denial: UtilizationReviewDecision
+    appeal_submission: Optional[AppealSubmission] = None
+    appeal_decision: Optional[AppealDecision] = None
+    appeal_filed: bool = False
+    appeal_successful: bool = False
+
+
+class ServiceLineItem(BaseModel):
+    service_description: str
+    cpt_or_drg_code: str
+    billed_amount: float
+    allowed_amount: float
+    paid_amount: float
+
+
+class DRGAssignment(BaseModel):
+    drg_code: str
+    drg_description: str
+    relative_weight: float
+    geometric_mean_los: float
+    base_payment_rate: float
+    total_drg_payment: float
+
+
+class FinancialSettlement(BaseModel):
+    line_items: List[ServiceLineItem] = Field(default_factory=list)
+    drg_assignment: Optional[DRGAssignment] = None
+    total_billed_charges: float
+    total_allowed_amount: float
+    payer_payment: float
+    patient_responsibility: float
+    outlier_payment: float = 0.0
+    quality_adjustments: float = 0.0
+    total_hospital_revenue: float
+    estimated_hospital_cost: float
+    hospital_margin: float
+
+
+class EncounterState(BaseModel):
+    case_id: str
+    encounter_id: str = Field(default_factory=lambda: f"ENC-{date.today().strftime('%Y%m%d')}")
+
+    # pa type discriminator
+    pa_type: str = PAType.INPATIENT_ADMISSION
+
+    admission_date: date
+    review_date: Optional[date] = None
+    appeal_date: Optional[date] = None
+    settlement_date: Optional[date] = None
+
+    admission: AdmissionNotification
+    clinical_presentation: ClinicalPresentation
+
+    # inpatient-specific fields
+    provider_documentation: Optional[ProviderClinicalRecord] = None
+    utilization_review: Optional[UtilizationReviewDecision] = None
+    appeal_record: Optional[AppealRecord] = None
+    financial_settlement: Optional[FinancialSettlement] = None
+    final_authorized_level: Optional[Literal["inpatient", "observation", "outpatient"]] = None
+
+    # medication-specific fields
+    medication_request: Optional[MedicationRequest] = None
+    medication_authorization: Optional[MedicationAuthorizationDecision] = None
+    medication_financial: Optional[MedicationFinancialSettlement] = None
+
+    denial_occurred: bool = False
+    appeal_filed: bool = False
+    appeal_successful: bool = False
+
+    ground_truth_outcome: Optional[Union[Literal["inpatient", "observation"], Literal["approved", "denied"]]] = None
+    simulation_matches_reality: Optional[bool] = None
 
 
 class Message(BaseModel):
@@ -8,48 +191,10 @@ class Message(BaseModel):
     session_id: str
     turn_id: int
     speaker: Literal["user", "agent"]
-    agent: Optional[Literal["Concierge", "UrgentCare", "Insurance", "Coordinator"]] = None
+    agent: Optional[Literal["Provider", "Payer"]] = None
     role: Literal["system", "assistant", "user"]
     content: str
-    timestamp: datetime = Field(default_factory=datetime.now)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class PatientEHR(BaseModel):
-    """Structured EHR data following FHIR standards - no narrative content"""
-    patient_id: str
-    demographics: Dict[str, Any]  # age, sex, mrn, etc.
-    vitals: Dict[str, Any]  # temp, bp, hr, weight, height, etc.
-    medical_history: List[str]  # structured medical history entries
-    insurance: Dict[str, Any]  # plan, member_id, network status, etc.
-    emergency_contacts: Dict[str, Any] = Field(default_factory=dict)  # emergency contact info
-    constraints: Dict[str, Any] = Field(default_factory=dict)  # time preferences, language, etc.
-    availability: Dict[str, List[str]] = Field(default_factory=dict)  # deprecated - kept for compatibility
-
-
-class ClinicalSummary(BaseModel):
-    """Clinical narrative generated by Concierge for specialist agents"""
-    patient_id: str
-    summary: str  # Concierge's clinical summary for specialists
-    chief_complaint: str  # Original patient complaint
-    presenting_symptoms: str  # Symptom narrative
-    urgency_level: Literal["routine", "urgent", "emergent"] = "routine"
-    generated_at: datetime = Field(default_factory=datetime.now)
-    generated_by: str = "Concierge"
-
-
-class GraphState(TypedDict):
-    messages: List[Message]
-    patient_ehr: PatientEHR
-    clinical_summary: Optional[ClinicalSummary]
-    current_agent: str
-    next_agent: Optional[str]
-    turn_count: int
-    max_turns: int
-    workflow_status: Literal["active", "done", "error"]
-    current_plan: Optional[Dict[str, Any]]
-    internal_context: Dict[str, Any]
-    conversation_history: List[str]
 
 
 class TestOrdered(BaseModel):
@@ -58,97 +203,40 @@ class TestOrdered(BaseModel):
     rationale: Optional[str] = None
 
 
-class ProviderDecision(BaseModel):
-    diagnosis: str
-    differential: List[str] = Field(default_factory=list)
-    tests_ordered: List[TestOrdered] = Field(default_factory=list)
-    documentation_intensity: int = Field(ge=0, le=10, default=5)
-    ai_adoption: int = Field(ge=0, le=10, default=5)
-    reasoning: Optional[str] = None
+# specialty medication pa models
+class MedicationRequest(BaseModel):
+    medication_name: str
+    ndc_code: Optional[str] = None
+    j_code: Optional[str] = None
+    dosage: str
+    frequency: str
+    duration: str
+    icd10_codes: List[str] = Field(default_factory=list)
+    clinical_rationale: str
+    prior_therapies_failed: List[str] = Field(default_factory=list)
+    step_therapy_completed: bool = False
 
 
-class PatientDecision(BaseModel):
-    ai_shopping_intensity: int = Field(ge=0, le=10, default=0)
-    confrontation_level: Literal["passive", "questioning", "demanding"] = "passive"
-    records_sharing: Literal["full", "selective", "minimal"] = "full"
-    concerns: List[str] = Field(default_factory=list)
-    ai_second_opinions: List[str] = Field(default_factory=list)
+class MedicationAuthorizationDecision(BaseModel):
+    reviewer_type: str
+    authorization_status: Literal["approved", "denied", "pending_info"]
+    denial_reason: Optional[str] = None
+    criteria_used: str
+    step_therapy_required: bool = False
+    missing_documentation: List[str] = Field(default_factory=list)
+    approved_quantity: Optional[str] = None
+    approved_duration_days: Optional[int] = None
+    requires_peer_to_peer: bool = False
 
 
-class PayorDecision(BaseModel):
-    ai_review_intensity: int = Field(ge=0, le=10, default=5)
-    approved_tests: List[str] = Field(default_factory=list)
-    denied_tests: List[str] = Field(default_factory=list)
-    denial_reasons: Dict[str, str] = Field(default_factory=dict)
-    reimbursement_percentage: float = Field(ge=0.0, le=1.0, default=1.0)
-    # Phase 2: Retrospective review
-    retrospective_denials: List[str] = Field(default_factory=list)  # Tests approved in Phase 1 but denied reimbursement in Phase 2
-    retrospective_reasoning: Optional[str] = None
-
-
-class LawyerDecision(BaseModel):
-    ai_analysis_intensity: int = Field(ge=0, le=10, default=5)
-    malpractice_detected: bool = False
-    liability_assessment: Literal["none", "potential", "clear"] = "none"
-    missed_diagnoses: List[str] = Field(default_factory=list)
-    standard_of_care_violations: List[str] = Field(default_factory=list)
-    litigation_recommendation: Literal["none", "demand_letter", "lawsuit"] = "none"
-
-
-class IterationRecord(BaseModel):
-    iteration_number: int
-    provider_tests_ordered: List[TestOrdered] = Field(default_factory=list)
-    payor_approved: List[str] = Field(default_factory=list)
-    payor_denied: List[str] = Field(default_factory=list)
-    provider_appeals: Dict[str, str] = Field(default_factory=dict)
-    provider_ordered_despite_denial: List[str] = Field(default_factory=list)
-    confidence: float = Field(ge=0.0, le=1.0)
-    differential: List[str] = Field(default_factory=list)
-    workup_completeness: float = Field(ge=0.0, le=1.0, default=0.0)
-    reasoning: Optional[str] = None
-
-
-class AgentMetrics(BaseModel):
-    provider: Dict[str, Any] = Field(default_factory=dict)
-    patient: Dict[str, Any] = Field(default_factory=dict)
-    payor: Dict[str, Any] = Field(default_factory=dict)
-    lawyer: Dict[str, Any] = Field(default_factory=dict)
-
-
-class CollectiveMetrics(BaseModel):
-    total_system_cost: float = 0.0
-    overall_trust_index: float = 0.5
-    defensive_cascade: bool = False
-    equilibrium_type: Literal["cooperative", "competitive"] = "cooperative"
-
-
-class GameState(BaseModel):
-    case_id: str
-    patient_presentation: Dict[str, Any]
-    ground_truth_diagnosis: str
-    medically_indicated_tests: List[str]
-
-    # Test results that accumulate during Phase 1
-    available_test_results: Dict[str, Any] = Field(default_factory=dict)  # lab_tests, radiology_reports from MIMIC
-    accumulated_test_results: List[str] = Field(default_factory=list)  # Tests performed and results received
-
-    provider_decision: Optional[ProviderDecision] = None
-    patient_decision: Optional[PatientDecision] = None
-    payor_decision: Optional[PayorDecision] = None
-    lawyer_decision: Optional[LawyerDecision] = None
-
-    iteration_history: List[IterationRecord] = Field(default_factory=list)
-    current_confidence: float = Field(ge=0.0, le=1.0, default=0.3)
-    max_iterations: int = Field(default=10)
-    stopping_reason: Optional[Literal["confidence_threshold", "max_iterations", "workup_complete"]] = None
-
-    diagnostic_accuracy: bool = False
-    defensive_medicine_index: float = 0.0
-
-    provider_payoff: float = 0.0
-    patient_payoff: float = 0.0
-    payor_payoff: float = 0.0
-    lawyer_payoff: float = 0.0
-
-    agent_metrics: Optional[AgentMetrics] = None
-    collective_metrics: Optional[CollectiveMetrics] = None
+class MedicationFinancialSettlement(BaseModel):
+    medication_name: str
+    j_code: Optional[str] = None
+    acquisition_cost: float
+    administration_fee: float = 0.0
+    total_billed: float
+    payer_payment: float
+    patient_copay: float
+    prior_auth_cost: float = 0.0
+    appeal_cost: float = 0.0
+    total_administrative_cost: float
