@@ -230,3 +230,23 @@ Medical History: {', '.join(presentation.medical_history)}"""
             "denial_reasons": {},
             "reasoning": "Error parsing response"
         }
+
+    def make_decision(self, state: EncounterState) -> Dict[str, Any]:
+        """Make strategic decision based on game state (stub implementation)."""
+        return {"action": "review_authorization", "state": "utilization_review"}
+
+    def calculate_payoff(self, state: EncounterState) -> float:
+        """Calculate utility/payoff from game outcome (stub implementation)."""
+        if state.financial_settlement:
+            # Payor's payoff is negative of payment made
+            return -state.financial_settlement.payer_payment
+        return 0.0
+
+    def calculate_metrics(self, state: EncounterState) -> Dict[str, float]:
+        """Calculate agent-specific metrics (stub implementation)."""
+        metrics = {
+            "denial_issued": float(state.denial_occurred),
+            "appeal_reviewed": float(state.appeal_filed),
+            "appeal_upheld": float(not state.appeal_successful) if state.appeal_filed else 0.0
+        }
+        return metrics

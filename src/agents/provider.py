@@ -173,3 +173,22 @@ Medical History: {', '.join(presentation.medical_history)}"""
             "confidence": 0.5,
             "reasoning": "Error parsing response"
         }
+
+    def make_decision(self, state: EncounterState) -> Dict[str, Any]:
+        """Make strategic decision based on game state (stub implementation)."""
+        return {"action": "order_tests", "state": "clinical_care"}
+
+    def calculate_payoff(self, state: EncounterState) -> float:
+        """Calculate utility/payoff from game outcome (stub implementation)."""
+        if state.financial_settlement:
+            return state.financial_settlement.hospital_margin
+        return 0.0
+
+    def calculate_metrics(self, state: EncounterState) -> Dict[str, float]:
+        """Calculate agent-specific metrics (stub implementation)."""
+        metrics = {
+            "iterations_count": len(state.provider_documentation.iterations) if state.provider_documentation else 0,
+            "appeal_filed": float(state.appeal_filed),
+            "appeal_successful": float(state.appeal_successful)
+        }
+        return metrics

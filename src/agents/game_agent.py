@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from src.models.schemas import GameState
+from src.models.schemas import EncounterState
 
 
 class GameAgent(ABC):
@@ -12,16 +12,16 @@ class GameAgent(ABC):
         self.config = config or {}
 
     @abstractmethod
-    def make_decision(self, state: GameState) -> Dict[str, Any]:
+    def make_decision(self, state: EncounterState) -> Dict[str, Any]:
         """Make strategic decision based on game state."""
         pass
 
     @abstractmethod
-    def calculate_payoff(self, state: GameState) -> float:
+    def calculate_payoff(self, state: EncounterState) -> float:
         """Calculate utility/payoff from game outcome."""
         pass
 
     @abstractmethod
-    def calculate_metrics(self, state: GameState) -> Dict[str, float]:
+    def calculate_metrics(self, state: EncounterState) -> Dict[str, float]:
         """Calculate agent-specific metrics."""
         pass
