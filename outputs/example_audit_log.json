@@ -1,0 +1,99 @@
+{
+  "case_id": "example_infliximab_001",
+  "simulation_start": "2025-11-05T06:03:43.665670",
+  "simulation_end": "2025-11-05T06:03:43.665850",
+  "interactions": [
+    {
+      "interaction_id": "phase_2_pa_payor_pa_decision_68ac86df",
+      "timestamp": "2025-11-05T06:03:43.665779",
+      "phase": "phase_2_pa",
+      "agent": "payor",
+      "action": "pa_decision",
+      "system_prompt": "You are a PAYER reviewing a specialty medication PRIOR AUTHORIZATION request.",
+      "user_prompt": "You are a PAYER reviewing a specialty medication PRIOR AUTHORIZATION request.\n\nPATIENT:\n- Age: 60\n- Sex: F\n- Diagnoses: Crohn's disease, Iron deficiency anemia\n- Chief Complaint: 10-day history of small intestinal stenosis, abdominal pain, watery diarrhea\n\nMEDICATION REQUEST:\n- Drug: Infliximab (Remicade)\n- Dosage: 5 mg/kg IV infusion\n- Frequency: Weeks 0, 2, 6, then every 8 weeks\n- ICD-10 Codes: K50.011, D50.9\n\nCLINICAL RATIONALE:\nPatient has active Crohn's disease with small bowel stenosis despite conventional therapy...\n\nSTEP THERAPY:\n- Prior Therapies Failed: Mesalamine, Prednisone, Azathioprine\n- Step Therapy Completed: True\n\nYour task: Evaluate this PA request using step therapy requirements and medical necessity criteria.\n\nRESPONSE FORMAT (JSON):\n{\n    \"authorization_status\": \"approved\" or \"denied\",\n    \"denial_reason\": \"<reason if denied>\",\n    \"criteria_used\": \"<guidelines>\",\n    \"reviewer_type\": \"AI algorithm\"\n}",
+      "llm_response": "{\n    \"authorization_status\": \"denied\",\n    \"denial_reason\": \"Insufficient documentation of disease activity. CRP and fecal calprotectin levels not provided.\",\n    \"criteria_used\": \"Step therapy protocol + disease activity criteria\",\n    \"step_therapy_required\": false,\n    \"missing_documentation\": [\"CRP level\", \"Fecal calprotectin\"],\n    \"approved_duration_days\": null,\n    \"requires_peer_to_peer\": true,\n    \"reviewer_type\": \"AI algorithm\"\n}",
+      "parsed_output": {
+        "authorization_status": "denied",
+        "denial_reason": "Insufficient documentation of disease activity",
+        "criteria_used": "Step therapy protocol",
+        "reviewer_type": "AI algorithm"
+      },
+      "metadata": {
+        "medication": "Infliximab"
+      }
+    },
+    {
+      "interaction_id": "phase_2_pa_appeal_provider_pa_appeal_submission_86d803e0",
+      "timestamp": "2025-11-05T06:03:43.665809",
+      "phase": "phase_2_pa_appeal",
+      "agent": "provider",
+      "action": "pa_appeal_submission",
+      "system_prompt": "You are a PROVIDER appealing a PA DENIAL for specialty medication.",
+      "user_prompt": "You are a PROVIDER appealing a PA DENIAL for specialty medication.\n\nDENIAL REASON:\nInsufficient documentation of disease activity. CRP and fecal calprotectin levels not provided.\n\nPATIENT CLINICAL DATA:\n- Age: 60\n- Medical History: Crohn's disease, Iron deficiency anemia\n- Chief Complaint: 10-day history of small intestinal stenosis\n\nMEDICATION REQUESTED:\n- Drug: Infliximab (Remicade)\n- Clinical Rationale: Active Crohn's with stricture despite conventional therapy\n\nAVAILABLE EVIDENCE:\n{\n    \"labs\": {\n        \"CRP\": \"45 mg/L (elevated)\",\n        \"Fecal_calprotectin\": \"850 mcg/g (significantly elevated)\",\n        \"Albumin\": \"3.2 g/dL (low)\",\n        \"Hemoglobin\": \"10.5 g/dL (anemia)\"\n    }\n}\n\nYour task: Submit PA appeal with additional clinical evidence.\n\nRESPONSE FORMAT (JSON):\n{\n    \"appeal_type\": \"peer_to_peer\" or \"written_appeal\",\n    \"additional_evidence\": \"<evidence>\",\n    \"severity_documentation\": \"<severity>\",\n    \"guideline_references\": [\"<ref>\"]\n}",
+      "llm_response": "{\n    \"appeal_type\": \"peer_to_peer\",\n    \"additional_evidence\": \"CRP 45 mg/L and fecal calprotectin 850 mcg/g confirm active inflammation. Patient has stricturing disease with partial obstruction.\",\n    \"severity_documentation\": \"Harvey-Bradshaw Index score of 14 indicating severe disease activity. Failed 3 conventional therapies.\",\n    \"guideline_references\": [\"ACG Crohn's Disease Guidelines 2018\", \"AGA IBD Guidelines\"]\n}",
+      "parsed_output": {
+        "appeal_type": "peer_to_peer",
+        "additional_evidence": "CRP 45 mg/L confirms inflammation",
+        "severity_documentation": "Harvey-Bradshaw Index 14",
+        "guideline_references": [
+          "ACG Guidelines 2018"
+        ]
+      },
+      "metadata": {
+        "denial_reason": "Insufficient documentation"
+      }
+    },
+    {
+      "interaction_id": "phase_2_pa_appeal_payor_pa_appeal_decision_7b0430aa",
+      "timestamp": "2025-11-05T06:03:43.665827",
+      "phase": "phase_2_pa_appeal",
+      "agent": "payor",
+      "action": "pa_appeal_decision",
+      "system_prompt": "You are a PAYER MEDICAL DIRECTOR reviewing a PA APPEAL.",
+      "user_prompt": "You are a PAYER MEDICAL DIRECTOR reviewing a PA APPEAL (Phase 2).\n\nORIGINAL PA DENIAL:\nInsufficient documentation of disease activity\n\nPROVIDER APPEAL:\nCRP 45 mg/L and fecal calprotectin 850 mcg/g confirm active inflammation...\n\nSEVERITY DOCUMENTATION:\nHarvey-Bradshaw Index score of 14 indicating severe disease activity...\n\nGUIDELINES CITED:\nACG Crohn's Disease Guidelines 2018, AGA IBD Guidelines\n\nYour task: Re-evaluate PA decision based on appeal evidence.\n\nRESPONSE FORMAT (JSON):\n{\n    \"appeal_outcome\": \"approved\" or \"upheld_denial\",\n    \"decision_rationale\": \"<reasoning>\",\n    \"criteria_applied\": \"<guidelines>\",\n    \"reviewer_credentials\": \"Medical Director, Board Certified Gastroenterology\"\n}",
+      "llm_response": "{\n    \"appeal_outcome\": \"approved\",\n    \"decision_rationale\": \"Lab values confirm active disease. Step therapy adequately documented. Meets criteria for biologic therapy.\",\n    \"criteria_applied\": \"ACG Crohn's guidelines + step therapy protocol\",\n    \"peer_to_peer_conducted\": true,\n    \"reviewer_credentials\": \"Medical Director, Board Certified Gastroenterology\"\n}",
+      "parsed_output": {
+        "appeal_outcome": "approved",
+        "decision_rationale": "Lab values confirm active disease",
+        "criteria_applied": "ACG Crohn's guidelines",
+        "reviewer_credentials": "Medical Director"
+      },
+      "metadata": {
+        "appeal_type": "peer_to_peer"
+      }
+    },
+    {
+      "interaction_id": "phase_3_claims_payor_claim_adjudication_9d8de1f5",
+      "timestamp": "2025-11-05T06:03:43.665844",
+      "phase": "phase_3_claims",
+      "agent": "payor",
+      "action": "claim_adjudication",
+      "system_prompt": "You are a PAYER reviewing a CLAIM for specialty medication.",
+      "user_prompt": "You are a PAYER reviewing a CLAIM for specialty medication (Phase 3).\n\nCRITICAL: This is CLAIM ADJUDICATION after treatment already delivered.\nThe PA was approved in Phase 2, but you can still deny payment if documentation is insufficient.\n\nPATIENT:\n- Age: 60\n- Medical History: Crohn's disease\n\nCLAIM SUBMITTED:\n- Medication: Infliximab (Remicade)\n- Dosage Administered: 5 mg/kg IV infusion\n- Amount Billed: $7,950.00\n\nPA APPROVAL RATIONALE (from Phase 2):\nACG Crohn's guidelines + step therapy protocol\n\nYour task: Review claim and decide to approve/deny PAYMENT.\n\nRESPONSE FORMAT (JSON):\n{\n    \"claim_status\": \"approved\" or \"denied\",\n    \"denial_reason\": \"<reason if denied>\",\n    \"approved_amount\": <amount>,\n    \"criteria_used\": \"<guidelines>\",\n    \"reviewer_type\": \"Claims adjudicator\"\n}",
+      "llm_response": "{\n    \"claim_status\": \"approved\",\n    \"denial_reason\": null,\n    \"approved_amount\": 7950.00,\n    \"criteria_used\": \"Standard billing guidelines - matches PA approval\",\n    \"requires_additional_documentation\": [],\n    \"reviewer_type\": \"Claims adjudicator\"\n}",
+      "parsed_output": {
+        "claim_status": "approved",
+        "approved_amount": 7950.0,
+        "criteria_used": "Standard billing guidelines",
+        "reviewer_type": "Claims adjudicator"
+      },
+      "metadata": {
+        "medication": "Infliximab",
+        "pa_approved": true
+      }
+    }
+  ],
+  "summary": {
+    "total_interactions": 4,
+    "interactions_by_phase": {
+      "phase_2_pa": 1,
+      "phase_2_pa_appeal": 2,
+      "phase_3_claims": 1
+    },
+    "interactions_by_agent": {
+      "payor": 3,
+      "provider": 1
+    },
+    "simulation_duration_seconds": 0.00018
+  }
+}
