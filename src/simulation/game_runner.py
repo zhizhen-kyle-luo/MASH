@@ -22,6 +22,7 @@ from src.models.schemas import (
 from src.agents.provider import ProviderAgent
 from src.agents.payor import PayorAgent
 from src.utils.cpt_calculator import CPTCostCalculator
+from src.utils.audit_logger import AuditLogger
 
 
 class UtilizationReviewSimulation:
@@ -87,6 +88,9 @@ class UtilizationReviewSimulation:
             pa_type=pa_type
         )
 
+        # initialize audit logger for this case
+        self.audit_logger = AuditLogger(case_id=case["case_id"])
+
         # route based on pa type
         if pa_type == PAType.SPECIALTY_MEDICATION:
             state.medication_request = case.get("medication_request_model")
@@ -108,6 +112,10 @@ class UtilizationReviewSimulation:
             state.simulation_matches_reality = (
                 state.final_authorized_level == case["ground_truth"]["outcome"]
             )
+
+        # finalize audit log and attach to state
+        self.audit_logger.finalize()
+        state.audit_log = self.audit_logger.get_audit_log()
 
         return state
 
@@ -409,14 +417,17 @@ RESPONSE FORMAT (JSON):
         messages = [HumanMessage(content=payor_prompt)]
         response = self.payor.llm.invoke(messages)
 
-        try:
-            response_text = response.content
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
+        # log the llm interaction
+        response_text = response.content
 
-            payor_decision = json.loads(response_text)
+        try:
+            clean_response = response_text
+            if "```json" in clean_response:
+                clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_response:
+                clean_response = clean_response.split("```")[1].split("```")[0].strip()
+
+            payor_decision = json.loads(clean_response)
         except:
             payor_decision = {
                 "authorization_status": "denied",
@@ -424,6 +435,18 @@ RESPONSE FORMAT (JSON):
                 "criteria_used": "Unknown",
                 "reviewer_type": "AI algorithm"
             }
+
+        # log audit trail
+        self.audit_logger.log_interaction(
+            phase="phase_2_pa",
+            agent="payor",
+            action="pa_decision",
+            system_prompt="Payor agent reviewing medication PA request",
+            user_prompt=payor_prompt,
+            llm_response=response_text,
+            parsed_output=payor_decision,
+            metadata={"medication": med_request.get('medication_name')}
+        )
 
         state.medication_authorization = MedicationAuthorizationDecision(
             reviewer_type=payor_decision.get("reviewer_type", "AI algorithm"),
@@ -474,14 +497,15 @@ RESPONSE FORMAT (JSON):
 
             messages = [HumanMessage(content=provider_appeal_prompt)]
             response = self.provider.llm.invoke(messages)
+            response_text = response.content
 
             try:
-                response_text = response.content
-                if "```json" in response_text:
-                    response_text = response_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in response_text:
-                    response_text = response_text.split("```")[1].split("```")[0].strip()
-                provider_appeal = json.loads(response_text)
+                clean_response = response_text
+                if "```json" in clean_response:
+                    clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_response:
+                    clean_response = clean_response.split("```")[1].split("```")[0].strip()
+                provider_appeal = json.loads(clean_response)
             except:
                 provider_appeal = {
                     "appeal_type": "written_appeal",
@@ -489,6 +513,18 @@ RESPONSE FORMAT (JSON):
                     "severity_documentation": "Disease severity documented",
                     "guideline_references": []
                 }
+
+            # log provider appeal submission
+            self.audit_logger.log_interaction(
+                phase="phase_2_pa_appeal",
+                agent="provider",
+                action="pa_appeal_submission",
+                system_prompt="Provider agent submitting PA appeal",
+                user_prompt=provider_appeal_prompt,
+                llm_response=response_text,
+                parsed_output=provider_appeal,
+                metadata={"denial_reason": state.medication_authorization.denial_reason}
+            )
 
             appeal_submission = AppealSubmission(
                 appeal_type=provider_appeal.get("appeal_type", "peer_to_peer"),
@@ -528,14 +564,15 @@ RESPONSE FORMAT (JSON):
 
             messages = [HumanMessage(content=payor_appeal_prompt)]
             response = self.payor.llm.invoke(messages)
+            response_text = response.content
 
             try:
-                response_text = response.content
-                if "```json" in response_text:
-                    response_text = response_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in response_text:
-                    response_text = response_text.split("```")[1].split("```")[0].strip()
-                appeal_decision_data = json.loads(response_text)
+                clean_response = response_text
+                if "```json" in clean_response:
+                    clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_response:
+                    clean_response = clean_response.split("```")[1].split("```")[0].strip()
+                appeal_decision_data = json.loads(clean_response)
             except:
                 appeal_decision_data = {
                     "appeal_outcome": "upheld_denial",
@@ -543,6 +580,18 @@ RESPONSE FORMAT (JSON):
                     "criteria_applied": "Formulary guidelines",
                     "reviewer_credentials": "Medical Director"
                 }
+
+            # log payor appeal decision
+            self.audit_logger.log_interaction(
+                phase="phase_2_pa_appeal",
+                agent="payor",
+                action="pa_appeal_decision",
+                system_prompt="Payor medical director reviewing PA appeal",
+                user_prompt=payor_appeal_prompt,
+                llm_response=response_text,
+                parsed_output=appeal_decision_data,
+                metadata={"appeal_type": provider_appeal.get("appeal_type")}
+            )
 
             appeal_decision = AppealDecision(
                 reviewer_credentials=appeal_decision_data.get("reviewer_credentials", "Medical Director"),
@@ -642,20 +691,33 @@ RESPONSE FORMAT (JSON):
 
         messages = [HumanMessage(content=payor_claim_prompt)]
         response = self.payor.llm.invoke(messages)
+        response_text = response.content
 
         try:
-            response_text = response.content
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
-            claim_decision = json.loads(response_text)
+            clean_response = response_text
+            if "```json" in clean_response:
+                clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_response:
+                clean_response = clean_response.split("```")[1].split("```")[0].strip()
+            claim_decision = json.loads(clean_response)
         except:
             claim_decision = {
                 "claim_status": "approved",
                 "criteria_used": "Standard billing guidelines",
                 "reviewer_type": "Claims adjudicator"
             }
+
+        # log claim adjudication
+        self.audit_logger.log_interaction(
+            phase="phase_3_claims",
+            agent="payor",
+            action="claim_adjudication",
+            system_prompt="Payor claims adjudicator reviewing medication claim",
+            user_prompt=payor_claim_prompt,
+            llm_response=response_text,
+            parsed_output=claim_decision,
+            metadata={"medication": med_request.get('medication_name'), "pa_approved": True}
+        )
 
         # store claim decision (reuse medication_authorization field but for claims)
         # TODO: add separate ClaimDecision model to schemas
