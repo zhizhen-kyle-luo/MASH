@@ -90,9 +90,11 @@ class UtilizationReviewSimulation:
         # route based on pa type
         if pa_type == PAType.SPECIALTY_MEDICATION:
             state.medication_request = case.get("medication_request_model")
+            # phase 2: prior authorization (with appeals if denied)
             state = self._phase_2_medication_pa(state, case)
-            if state.denial_occurred:
-                state = self._phase_3_medication_appeal(state, case)
+            # phase 3: claims adjudication (separate from pa)
+            state = self._phase_3_medication_claims(state, case)
+            # phase 4: financial settlement based on claim outcome
             state = self._phase_4_medication_financial(state, case)
 
         else:  # inpatient admission (default)
@@ -343,9 +345,12 @@ class UtilizationReviewSimulation:
         case: Dict[str, Any]
     ) -> EncounterState:
         """
-        phase 2 for specialty medication: prior authorization review
+        phase 2: prior authorization review (BEFORE treatment)
 
-        provider submits med request → payer evaluates → approve/deny
+        provider submits pa request → payer evaluates → approve/deny
+        if denied → provider appeals pa → payer reconsiders
+
+        KEY: this is permission to treat, NOT payment guarantee
         """
         import json
 
@@ -353,8 +358,11 @@ class UtilizationReviewSimulation:
 
         med_request = case.get("medication_request", {})
 
-        # payer reviews medication request
-        payor_prompt = f"""You are a PAYER reviewing a specialty medication prior authorization request.
+        # payer reviews pa request
+        payor_prompt = f"""You are a PAYER reviewing a specialty medication PRIOR AUTHORIZATION request.
+
+CRITICAL: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
+Even if you approve the PA, you will review the claim separately after treatment is delivered.
 
 PATIENT:
 - Age: {state.admission.patient_demographics.age}
@@ -428,32 +436,19 @@ RESPONSE FORMAT (JSON):
             requires_peer_to_peer=payor_decision.get("requires_peer_to_peer", False)
         )
 
+        # if pa denied, provider appeals within phase 2
         if state.medication_authorization.authorization_status == "denied":
             state.denial_occurred = True
+            state.appeal_date = state.review_date + timedelta(days=2)
+            state.appeal_filed = True
 
-        return state
+            # provider creates pa appeal
+            provider_appeal_prompt = f"""You are a PROVIDER appealing a PA DENIAL for specialty medication.
 
-    def _phase_3_medication_appeal(
-        self,
-        state: EncounterState,
-        case: Dict[str, Any]
-    ) -> EncounterState:
-        """
-        phase 3 for medication: provider appeals pa denial
-        """
-        import json
-
-        state.appeal_date = state.review_date + timedelta(days=2)
-        state.appeal_filed = True
-
-        med_request = case.get("medication_request", {})
-        denial = state.medication_authorization
-
-        # provider submits appeal
-        provider_prompt = f"""You are a PROVIDER appealing a specialty medication PA denial.
+PA WAS DENIED - you are appealing the authorization decision (NOT a claim denial).
 
 DENIAL REASON:
-{denial.denial_reason}
+{state.medication_authorization.denial_reason}
 
 PATIENT CLINICAL DATA:
 - Age: {state.admission.patient_demographics.age}
@@ -467,7 +462,7 @@ MEDICATION REQUESTED:
 AVAILABLE EVIDENCE:
 {json.dumps(case.get('available_test_results', {}), indent=2)}
 
-Your task: Submit appeal with additional clinical evidence demonstrating medical necessity.
+Your task: Submit PA appeal with additional clinical evidence.
 
 RESPONSE FORMAT (JSON):
 {{
@@ -477,37 +472,39 @@ RESPONSE FORMAT (JSON):
     "guideline_references": ["<guideline 1>", ...]
 }}"""
 
-        messages = [HumanMessage(content=provider_prompt)]
-        response = self.provider.llm.invoke(messages)
+            messages = [HumanMessage(content=provider_appeal_prompt)]
+            response = self.provider.llm.invoke(messages)
 
-        try:
-            response_text = response.content
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
+            try:
+                response_text = response.content
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                provider_appeal = json.loads(response_text)
+            except:
+                provider_appeal = {
+                    "appeal_type": "written_appeal",
+                    "additional_evidence": "Clinical evidence submitted",
+                    "severity_documentation": "Disease severity documented",
+                    "guideline_references": []
+                }
 
-            provider_appeal = json.loads(response_text)
-        except:
-            provider_appeal = {
-                "appeal_type": "written_appeal",
-                "additional_evidence": "Clinical evidence submitted",
-                "severity_documentation": "Disease severity documented",
-                "guideline_references": []
-            }
+            appeal_submission = AppealSubmission(
+                appeal_type=provider_appeal.get("appeal_type", "peer_to_peer"),
+                additional_clinical_evidence=provider_appeal.get("additional_evidence", ""),
+                severity_documentation=provider_appeal.get("severity_documentation", ""),
+                guideline_references=provider_appeal.get("guideline_references", [])
+            )
 
-        appeal_submission = AppealSubmission(
-            appeal_type=provider_appeal.get("appeal_type", "peer_to_peer"),
-            additional_clinical_evidence=provider_appeal.get("additional_evidence", ""),
-            severity_documentation=provider_appeal.get("severity_documentation", ""),
-            guideline_references=provider_appeal.get("guideline_references", [])
-        )
+            # payer reviews pa appeal
+            payor_appeal_prompt = f"""You are a PAYER MEDICAL DIRECTOR reviewing a PA APPEAL (Phase 2).
 
-        # payer reviews appeal
-        payor_appeal_prompt = f"""You are a PAYER MEDICAL DIRECTOR reviewing a medication PA appeal.
+This is an appeal of a PRIOR AUTHORIZATION denial, not a claim denial.
+You previously denied the PA. Now reconsider based on additional evidence.
 
-ORIGINAL DENIAL:
-{denial.denial_reason}
+ORIGINAL PA DENIAL:
+{state.medication_authorization.denial_reason}
 
 PROVIDER APPEAL:
 {provider_appeal.get('additional_evidence')}
@@ -517,9 +514,6 @@ SEVERITY DOCUMENTATION:
 
 GUIDELINES CITED:
 {', '.join(provider_appeal.get('guideline_references', []))}
-
-CLINICAL CONTEXT:
-{json.dumps(case.get('available_test_results', {}), indent=2)}
 
 Your task: Re-evaluate PA decision based on appeal evidence.
 
@@ -532,7 +526,121 @@ RESPONSE FORMAT (JSON):
     "reviewer_credentials": "Medical Director, Board Certified <specialty>"
 }}"""
 
-        messages = [HumanMessage(content=payor_appeal_prompt)]
+            messages = [HumanMessage(content=payor_appeal_prompt)]
+            response = self.payor.llm.invoke(messages)
+
+            try:
+                response_text = response.content
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                appeal_decision_data = json.loads(response_text)
+            except:
+                appeal_decision_data = {
+                    "appeal_outcome": "upheld_denial",
+                    "decision_rationale": "Unable to parse appeal response",
+                    "criteria_applied": "Formulary guidelines",
+                    "reviewer_credentials": "Medical Director"
+                }
+
+            appeal_decision = AppealDecision(
+                reviewer_credentials=appeal_decision_data.get("reviewer_credentials", "Medical Director"),
+                appeal_outcome=appeal_decision_data["appeal_outcome"],
+                final_authorized_level="approved" if appeal_decision_data["appeal_outcome"] == "approved" else "denied",
+                decision_rationale=appeal_decision_data.get("decision_rationale", ""),
+                criteria_applied=appeal_decision_data.get("criteria_applied", ""),
+                peer_to_peer_conducted=appeal_decision_data.get("peer_to_peer_conducted", False)
+            )
+
+            # update state with pa appeal result
+            state.appeal_record = AppealRecord(
+                initial_denial=state.medication_authorization,
+                appeal_submission=appeal_submission,
+                appeal_decision=appeal_decision,
+                appeal_filed=True,
+                appeal_successful=(appeal_decision.appeal_outcome == "approved")
+            )
+
+            # if pa appeal successful, update authorization status
+            if appeal_decision.appeal_outcome == "approved":
+                state.medication_authorization.authorization_status = "approved"
+                state.denial_occurred = False
+                state.appeal_successful = True
+
+        return state
+
+    def _phase_3_medication_claims(
+        self,
+        state: EncounterState,
+        case: Dict[str, Any]
+    ) -> EncounterState:
+        """
+        phase 3: claims adjudication (AFTER treatment delivered)
+
+        if pa approved → provider treats patient and submits claim
+        payer reviews claim → approve/deny (INDEPENDENT from pa decision)
+        if claim denied → provider appeals claim
+
+        KEY: payer can deny claim even if pa was approved
+        """
+        import json
+
+        # only process claims if pa was approved (or appealed successfully)
+        if state.medication_authorization.authorization_status != "approved":
+            # pa denied and not overturned - no treatment, no claim
+            return state
+
+        med_request = case.get("medication_request", {})
+        cost_ref = case.get("cost_reference", {})
+
+        # provider treats patient and submits claim
+        claim_date = state.appeal_date if state.appeal_date else state.review_date
+        claim_date = claim_date + timedelta(days=7)  # treatment + claim submission
+
+        # payer reviews claim (AFTER treatment delivered)
+        payor_claim_prompt = f"""You are a PAYER reviewing a CLAIM for specialty medication (Phase 3).
+
+CRITICAL: This is Phase 3 - CLAIM ADJUDICATION after treatment already delivered.
+The PA was approved in Phase 2, but you can still deny payment if documentation is insufficient.
+
+PATIENT:
+- Age: {state.admission.patient_demographics.age}
+- Medical History: {', '.join(state.clinical_presentation.medical_history)}
+
+CLAIM SUBMITTED:
+- Medication: {med_request.get('medication_name')}
+- Dosage Administered: {med_request.get('dosage')}
+- Amount Billed: ${cost_ref.get('drug_acquisition_cost', 7800) + cost_ref.get('administration_fee', 150):.2f}
+
+PA APPROVAL RATIONALE (from Phase 2):
+{state.medication_authorization.criteria_used if state.medication_authorization else 'PA approved'}
+
+CLINICAL DOCUMENTATION:
+{med_request.get('clinical_rationale')}
+
+LAB DATA:
+{json.dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
+
+Your task: Review claim and decide to approve/deny PAYMENT.
+
+Common reasons to deny claim despite PA approval:
+- Dosing doesn't match PA approval
+- Documentation insufficient (missing notes, labs)
+- Treatment delivered doesn't match authorized indication
+- Billing errors or upcoding
+
+RESPONSE FORMAT (JSON):
+{{
+    "claim_status": "approved" or "denied" or "partial",
+    "denial_reason": "<specific reason if denied>",
+    "approved_amount": <dollar amount or null>,
+    "criteria_used": "<billing guidelines>",
+    "requires_additional_documentation": ["<item1>", ...],
+    "reviewer_type": "Claims adjudicator" or "Medical reviewer"
+}}"""
+
+        messages = [HumanMessage(content=payor_claim_prompt)]
         response = self.payor.llm.invoke(messages)
 
         try:
@@ -541,34 +649,111 @@ RESPONSE FORMAT (JSON):
                 response_text = response_text.split("```json")[1].split("```")[0].strip()
             elif "```" in response_text:
                 response_text = response_text.split("```")[1].split("```")[0].strip()
-
-            appeal_decision_data = json.loads(response_text)
+            claim_decision = json.loads(response_text)
         except:
-            appeal_decision_data = {
-                "appeal_outcome": "upheld_denial",
-                "decision_rationale": "Unable to parse appeal response",
-                "criteria_applied": "Formulary guidelines",
-                "reviewer_credentials": "Medical Director"
+            claim_decision = {
+                "claim_status": "approved",
+                "criteria_used": "Standard billing guidelines",
+                "reviewer_type": "Claims adjudicator"
             }
 
-        appeal_decision = AppealDecision(
-            reviewer_credentials=appeal_decision_data.get("reviewer_credentials", "Medical Director"),
-            appeal_outcome=appeal_decision_data["appeal_outcome"],
-            final_authorized_level="approved" if appeal_decision_data["appeal_outcome"] == "approved" else "denied",
-            decision_rationale=appeal_decision_data.get("decision_rationale", ""),
-            criteria_applied=appeal_decision_data.get("criteria_applied", ""),
-            peer_to_peer_conducted=appeal_decision_data.get("peer_to_peer_conducted", False)
-        )
+        # store claim decision (reuse medication_authorization field but for claims)
+        # TODO: add separate ClaimDecision model to schemas
+        state.medication_authorization.authorization_status = claim_decision["claim_status"]
+        if claim_decision["claim_status"] == "denied":
+            state.medication_authorization.denial_reason = claim_decision.get("denial_reason")
 
-        state.appeal_record = AppealRecord(
-            initial_denial=denial,
-            appeal_submission=appeal_submission,
-            appeal_decision=appeal_decision,
-            appeal_filed=True,
-            appeal_successful=(appeal_decision.appeal_outcome == "approved")
-        )
+            # claim denied - provider can appeal
+            state.appeal_date = claim_date + timedelta(days=2)
+            state.appeal_filed = True
 
-        state.appeal_successful = state.appeal_record.appeal_successful
+            # provider appeals claim denial
+            provider_claim_appeal_prompt = f"""You are a PROVIDER appealing a CLAIM DENIAL (Phase 3).
+
+CLAIM WAS DENIED - you already treated the patient, but payer is denying payment.
+Note: PA was approved, but claim was denied anyway.
+
+CLAIM DENIAL REASON:
+{claim_decision.get('denial_reason')}
+
+TREATMENT PROVIDED:
+- Medication: {med_request.get('medication_name')}
+- Dosage: {med_request.get('dosage')}
+- Clinical Rationale: {med_request.get('clinical_rationale')}
+
+Your task: Submit claim appeal to get payment for treatment already delivered.
+
+RESPONSE FORMAT (JSON):
+{{
+    "appeal_type": "peer_to_peer" or "written_appeal",
+    "additional_documentation": "<what you're providing>",
+    "billing_justification": "<why claim should be paid>",
+    "guidelines_cited": ["<guideline 1>", ...]
+}}"""
+
+            messages = [HumanMessage(content=provider_claim_appeal_prompt)]
+            response = self.provider.llm.invoke(messages)
+
+            try:
+                response_text = response.content
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                provider_claim_appeal = json.loads(response_text)
+            except:
+                provider_claim_appeal = {
+                    "appeal_type": "written_appeal",
+                    "additional_documentation": "Additional documentation submitted",
+                    "billing_justification": "Claim meets billing criteria"
+                }
+
+            # payer reviews claim appeal
+            payor_claim_appeal_prompt = f"""You are a PAYER MEDICAL DIRECTOR reviewing CLAIM APPEAL (Phase 3).
+
+Provider appealing your claim denial. Treatment already delivered, they want payment.
+
+ORIGINAL CLAIM DENIAL:
+{claim_decision.get('denial_reason')}
+
+PROVIDER APPEAL:
+{provider_claim_appeal.get('additional_documentation')}
+
+BILLING JUSTIFICATION:
+{provider_claim_appeal.get('billing_justification')}
+
+Your task: Reconsider claim decision based on appeal.
+
+RESPONSE FORMAT (JSON):
+{{
+    "appeal_outcome": "approved" or "upheld_denial" or "partial_approval",
+    "approved_amount": <dollar amount or null>,
+    "decision_rationale": "<reasoning>",
+    "criteria_applied": "<guidelines>"
+}}"""
+
+            messages = [HumanMessage(content=payor_claim_appeal_prompt)]
+            response = self.payor.llm.invoke(messages)
+
+            try:
+                response_text = response.content
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                claim_appeal_decision = json.loads(response_text)
+            except:
+                claim_appeal_decision = {
+                    "appeal_outcome": "upheld_denial",
+                    "decision_rationale": "Unable to parse appeal"
+                }
+
+            # update state with claim appeal result
+            if claim_appeal_decision["appeal_outcome"] == "approved":
+                state.medication_authorization.authorization_status = "approved"
+                state.appeal_successful = True
+            elif claim_appeal_decision["appeal_outcome"] == "partial_approval":
+                state.medication_authorization.authorization_status = "partial"
 
         return state
 
@@ -578,41 +763,45 @@ RESPONSE FORMAT (JSON):
         case: Dict[str, Any]
     ) -> EncounterState:
         """
-        phase 4 for medication: calculate drug costs + administrative burden
+        phase 4: financial settlement based on CLAIM outcome (not pa outcome)
+
+        KEY: payment only happens if CLAIM approved in phase 3
+        pa approval does NOT guarantee payment
         """
         state.settlement_date = (state.appeal_date or state.review_date) + timedelta(days=7)
 
-        ground_truth = case.get("ground_truth_financial", {})
-        med_costs = ground_truth.get("medication_costs", {})
-        admin_costs = ground_truth.get("administrative_costs", {})
+        cost_ref = case.get("cost_reference", {})
 
-        # determine if medication was ultimately approved
-        approved = False
-        if state.medication_authorization and state.medication_authorization.authorization_status == "approved":
-            approved = True
-        elif state.appeal_successful:
-            approved = True
+        # payment based on CLAIM outcome (phase 3), not PA outcome (phase 2)
+        claim_approved = (
+            state.medication_authorization and
+            state.medication_authorization.authorization_status == "approved"
+        )
 
-        if approved:
-            acquisition_cost = med_costs.get("drug_acquisition_cost", 7800.0)
-            admin_fee = med_costs.get("administration_fee", 150.0)
+        if claim_approved:
+            acquisition_cost = cost_ref.get("drug_acquisition_cost", 7800.0)
+            admin_fee = cost_ref.get("administration_fee", 150.0)
             total_cost = acquisition_cost + admin_fee
 
-            # typical ma copay structure: 20% patient, 80% plan
+            # typical ma copay: 20% patient, 80% plan
             patient_copay = total_cost * 0.20
             payer_payment = total_cost * 0.80
         else:
-            acquisition_cost = 0.0
-            admin_fee = 0.0
-            total_cost = 0.0
+            # claim denied - provider gets $0 even though they already treated patient
+            acquisition_cost = cost_ref.get("drug_acquisition_cost", 7800.0)
+            admin_fee = cost_ref.get("administration_fee", 150.0)
+            total_cost = acquisition_cost + admin_fee
             patient_copay = 0.0
             payer_payment = 0.0
 
-        # administrative costs
-        pa_cost = admin_costs.get("provider_pa_submission", 50.0) + admin_costs.get("payer_pa_review", 25.0)
+        # administrative costs: pa review + claim review + appeals
+        pa_review_cost = cost_ref.get("pa_review_cost", 75.0)
+        claim_review_cost = cost_ref.get("claim_review_cost", 50.0)
         appeal_cost = 0.0
         if state.appeal_filed:
-            appeal_cost = admin_costs.get("provider_appeal_p2p", 180.0) + admin_costs.get("payer_appeal_review", 120.0)
+            appeal_cost = cost_ref.get("appeal_cost", 180.0)
+
+        total_admin_cost = pa_review_cost + claim_review_cost + appeal_cost
 
         state.medication_financial = MedicationFinancialSettlement(
             medication_name=case.get("medication_request", {}).get("medication_name", "Unknown"),
@@ -622,9 +811,9 @@ RESPONSE FORMAT (JSON):
             total_billed=total_cost,
             payer_payment=payer_payment,
             patient_copay=patient_copay,
-            prior_auth_cost=pa_cost,
+            prior_auth_cost=pa_review_cost + claim_review_cost,
             appeal_cost=appeal_cost,
-            total_administrative_cost=pa_cost + appeal_cost
+            total_administrative_cost=total_admin_cost
         )
 
         return state
