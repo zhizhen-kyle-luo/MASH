@@ -4,13 +4,13 @@ from langchain_core.messages import HumanMessage
 from src.agents.game_agent import GameAgent
 from src.models.schemas import EncounterState, AppealSubmission
 from src.utils.cpt_calculator import CPTCostCalculator
-from src.utils.prompts import PAYOR_SYSTEM_PROMPT
+from src.utils.prompts import create_payor_prompt
 
 
 class PayorAgent(GameAgent):
     """Payer agent for concurrent utilization review and appeals."""
 
-    SYSTEM_PROMPT = PAYOR_SYSTEM_PROMPT
+    SYSTEM_PROMPT = create_payor_prompt()
 
     def __init__(self, llm, config: Dict[str, Any] = None):
         super().__init__(llm, "Payor", config)

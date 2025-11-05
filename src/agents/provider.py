@@ -4,13 +4,13 @@ from langchain_core.messages import HumanMessage
 from src.agents.game_agent import GameAgent
 from src.models.schemas import EncounterState, ClinicalIteration, UtilizationReviewDecision
 from src.utils.cpt_calculator import CPTCostCalculator
-from src.utils.prompts import PROVIDER_SYSTEM_PROMPT
+from src.utils.prompts import create_provider_prompt
 
 
 class ProviderAgent(GameAgent):
     """Provider agent for concurrent utilization review workflow."""
 
-    SYSTEM_PROMPT = PROVIDER_SYSTEM_PROMPT
+    SYSTEM_PROMPT = create_provider_prompt()
 
     def __init__(self, llm, config: Dict[str, Any] = None):
         super().__init__(llm, "Provider", config)

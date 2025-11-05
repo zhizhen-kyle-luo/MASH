@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional, Literal, Union
 from datetime import date
 from pydantic import BaseModel, Field
+import json
 
 
 # pa type discriminator for different authorization workflows
@@ -267,3 +268,106 @@ class AuditLog(BaseModel):
     simulation_end: Optional[str] = None
     interactions: List[LLMInteraction] = Field(default_factory=list)
     summary: Dict[str, Any] = Field(default_factory=dict)
+
+    def save_to_markdown(self, filepath: str):
+        """save audit log to markdown file with full interaction details"""
+        lines = []
+
+        # header
+        lines.append(f"# Audit Log: {self.case_id}")
+        lines.append("")
+        lines.append(f"**Simulation Start:** {self.simulation_start}")
+        lines.append(f"**Simulation End:** {self.simulation_end or 'In Progress'}")
+        lines.append("")
+
+        # summary
+        if self.summary:
+            lines.append("## Summary")
+            lines.append("")
+            lines.append(f"- **Total Interactions:** {self.summary.get('total_interactions', 0)}")
+            lines.append(f"- **Duration:** {self.summary.get('simulation_duration_seconds', 0):.2f} seconds")
+            lines.append("")
+
+            if "interactions_by_phase" in self.summary:
+                lines.append("**Interactions by Phase:**")
+                for phase, count in self.summary["interactions_by_phase"].items():
+                    lines.append(f"- {phase}: {count}")
+                lines.append("")
+
+            if "interactions_by_agent" in self.summary:
+                lines.append("**Interactions by Agent:**")
+                for agent, count in self.summary["interactions_by_agent"].items():
+                    lines.append(f"- {agent}: {count}")
+                lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+        # detailed interactions
+        for i, interaction in enumerate(self.interactions, 1):
+            # interaction header
+            phase_name = self._format_phase_name(interaction.phase)
+            lines.append(f"## Interaction {i}: {phase_name}")
+            lines.append("")
+            lines.append(f"**Timestamp:** {interaction.timestamp}")
+            lines.append(f"**Agent:** {interaction.agent.capitalize()}")
+            lines.append(f"**Action:** {interaction.action.replace('_', ' ').title()}")
+            lines.append("")
+
+            # metadata
+            if interaction.metadata:
+                lines.append("**Metadata:**")
+                for key, value in interaction.metadata.items():
+                    if isinstance(value, (list, dict)):
+                        lines.append(f"- {key}: `{json.dumps(value)}`")
+                    else:
+                        lines.append(f"- {key}: {value}")
+                lines.append("")
+
+            # system prompt
+            lines.append("### System Prompt")
+            lines.append("")
+            lines.append("```")
+            lines.append(interaction.system_prompt)
+            lines.append("```")
+            lines.append("")
+
+            # user prompt
+            lines.append("### User Prompt")
+            lines.append("")
+            lines.append("```")
+            lines.append(interaction.user_prompt)
+            lines.append("```")
+            lines.append("")
+
+            # llm response
+            lines.append("### LLM Response")
+            lines.append("")
+            lines.append("```")
+            lines.append(interaction.llm_response)
+            lines.append("```")
+            lines.append("")
+
+            # parsed output
+            lines.append("### Parsed Output")
+            lines.append("")
+            lines.append("```json")
+            lines.append(json.dumps(interaction.parsed_output, indent=2))
+            lines.append("```")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # write to file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write("\n".join(lines))
+
+    def _format_phase_name(self, phase: str) -> str:
+        """format phase identifier as readable name"""
+        phase_names = {
+            "phase_2_pa": "Phase 2: Prior Authorization",
+            "phase_2_pa_appeal": "Phase 2: PA Appeal Process",
+            "phase_3_claims": "Phase 3: Claims Adjudication",
+            "phase_4_financial": "Phase 4: Financial Settlement"
+        }
+        return phase_names.get(phase, phase.replace("_", " ").title())

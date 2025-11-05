@@ -115,14 +115,14 @@ def test_infliximab_simulation():
         # Save audit log as markdown
         audit_log_path = f"{output_dir}/{result.audit_log.case_id}_audit_log.md"
         result.audit_log.save_to_markdown(audit_log_path)
-        print(f"\n✓ Audit log saved to: {audit_log_path}")
+        print(f"\n[OK] Audit log saved to: {audit_log_path}")
 
         # Generate and save mermaid diagram
         mermaid_path = f"{output_dir}/{result.audit_log.case_id}_workflow.mmd"
         MermaidAuditGenerator.save_from_state(result, mermaid_path)
-        print(f"✓ Mermaid diagram saved to: {mermaid_path}")
+        print(f"[OK] Mermaid diagram saved to: {mermaid_path}")
     else:
-        print("\n⚠ No audit log available")
+        print("\n[WARN] No audit log available")
 
     return result
 

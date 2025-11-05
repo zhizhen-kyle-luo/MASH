@@ -1,4 +1,23 @@
-def create_provider_prompt(params):
+# default behavioral parameters
+DEFAULT_PROVIDER_PARAMS = {
+    'patient_care_weight': 'high',
+    'documentation_style': 'moderate',
+    'risk_tolerance': 'moderate',
+    'ai_adoption': 'moderate'
+}
+
+DEFAULT_PAYOR_PARAMS = {
+    'cost_focus': 'moderate',
+    'ai_reliance': 'high',
+    'denial_threshold': 'moderate',
+    'time_horizon': 'short-term'
+}
+
+def create_provider_prompt(params=None):
+    """create provider system prompt with behavioral parameters"""
+    if params is None:
+        params = DEFAULT_PROVIDER_PARAMS
+
     return f"""You are a PROVIDER agent (hospital/clinic) in Fee-for-Service Medicare Advantage.
 
 BEHAVIORAL PARAMETERS:
@@ -8,10 +27,6 @@ BEHAVIORAL PARAMETERS:
 - AI tool usage: {params['ai_adoption']}
 
 CRITICAL CONTEXT - WHAT YOUR DECISIONS MEAN:
-
-ELIGIBILITY CHECK (Phase 1):
-- Service requested → Check if patient covered for service
-- Not covered → Patient pays out-of-pocket OR service not provided
 
 PRIOR AUTHORIZATION (Phase 2):
 - When you REQUEST auth → Waiting for approval before treating patient
@@ -28,18 +43,30 @@ RETROSPECTIVE CLAIMS (Phase 3):
 - Write-off → Direct loss to your practice's bottom line
 - Bill patient → Often uncollectible, damages patient relationship
 
-FINANCIAL AFTERMATH (Phase 4):
-- Approved claim → Revenue received, cash flow positive
-- Appeals → Administrative costs, delayed revenue
-- Write-offs → Direct financial hit to your practice
-- Patient billing → Low recovery rates, potential bad debt
+FINANCIAL REALITY:
+- Your practice operates on thin margins
+- Each write-off directly impacts profitability
+- High denial rates → More staff needed for admin → Higher overhead
+- Cash flow depends on timely claim payment
+- Medicare Advantage pays via DRG/bundled rates, not itemized
+
+RELATIONSHIP DYNAMICS:
+- Same insurers repeatedly → Pattern recognition develops
+- High denial insurer → You pre-emptively over-document (defensive medicine)
+- Trust erosion → You may consider dropping from their network
+- Patient satisfaction → Affects referrals and reputation
 
 DOCUMENTATION BURDEN:
 - Minimal: Quick notes, may miss key criteria → Higher denial risk
-- Moderate: Standard documentation → Typical approval rates  
-- Defensive: Extra time documenting → Lower denials but less patient time"""
+- Moderate: Standard documentation → Typical approval rates
+- Defensive: Extra time documenting → Lower denials but less patient time
+- Excessive: AI-generated walls of text → Arms race with insurer AI"""
 
-def create_insurer_prompt(params):
+def create_payor_prompt(params=None):
+    """create payor system prompt with behavioral parameters"""
+    if params is None:
+        params = DEFAULT_PAYOR_PARAMS
+
     return f"""You are an INSURER agent (Medicare Advantage plan) managing costs using AI systems.
 
 BEHAVIORAL PARAMETERS:
@@ -64,11 +91,6 @@ RETROSPECTIVE CLAIMS (Phase 3):
 - Appeals process → Escalating costs for you to defend
 - Provider frustration → May drop network, requiring expensive replacement
 
-FINANCIAL AFTERMATH (Phase 4):
-- Approved claim → You pay out, reducing profit
-- Denied claim → You save money unless appealed successfully
-- Appeals → Administrative costs, potential loss if appeal succeed
-
 FINANCIAL REALITY:
 - Premium revenue fixed annually
 - Regulatory requirements on medical spending ratios exist
@@ -81,39 +103,175 @@ AI SYSTEM MECHANICS:
 - Providers adapt → AI must continuously update
 - Arms race: Their AI generates documentation, your AI detects patterns
 - False positives → Good claims denied → Appeals → Admin burden
-- Over-reliance → Missing clinical nuance → Reputation risk when exposed"""
-
-
-# default system prompts for agents
-PROVIDER_SYSTEM_PROMPT = """You are a PROVIDER agent (hospital/clinic) in Fee-for-Service Medicare Advantage.
-
-Your role: Submit prior authorizations, document clinical necessity, and appeal denials to ensure patient care and practice viability.
-
-FINANCIAL REALITY:
-- Your practice operates on thin margins
-- Each write-off directly impacts profitability
-- High denial rates require more admin staff
-- Cash flow depends on timely claim payment
+- Over-reliance → Missing clinical nuance → Reputation risk when exposed
 
 DECISION TRADE-OFFS:
-- Over-ordering tests: Defensive medicine increases costs
-- Under-documenting: Higher denial rates
-- Aggressive appeals: Staff time vs. revenue recovery
-- Dropping payers: Network loss vs. profitability"""
+- Denying claims saves money IF provider doesn't successfully appeal
+- But excessive appeals create administrative burden
+- Provider network departures require costly recruitment
+- High denial rates risk regulatory scrutiny and bad publicity
+- Must balance cost savings with network stability
 
+REPUTATION CONSIDERATIONS:
+- High denial rates → Bad press, patient complaints
+- Poor ratings → Potential regulatory consequences
+- Provider word-of-mouth → Affects network recruitment
+- But pressure exists to maintain profitability"""
 
-PAYOR_SYSTEM_PROMPT = """You are a PAYER agent (Medicare Advantage plan) managing costs using AI systems.
+def create_pa_decision_prompt(state, med_request, case):
+    """create task prompt for medication PA decision"""
+    return f"""TASK: Review specialty medication PRIOR AUTHORIZATION request (Phase 2)
 
-Your role: Review prior authorizations and claims to ensure medical necessity and cost-effectiveness while maintaining network adequacy.
+CRITICAL CONTEXT: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
+Even if you approve the PA, you will review the claim separately after treatment is delivered.
 
-FINANCIAL REALITY:
-- Premium revenue fixed annually
-- Profit from margin between premiums and costs
-- Regulatory medical loss ratio requirements
-- Network adequacy must be maintained
+PATIENT:
+- Age: {state.admission.patient_demographics.age}
+- Sex: {state.admission.patient_demographics.sex}
+- Diagnoses: {', '.join(state.clinical_presentation.medical_history)}
+- Chief Complaint: {state.clinical_presentation.chief_complaint}
 
-DECISION TRADE-OFFS:
-- Denying claims: Immediate savings vs. appeal costs
-- AI reliance: Efficiency vs. false positives
-- Provider relations: Cost control vs. network stability
-- Regulatory risk: Denial rates vs. penalties"""
+MEDICATION REQUEST:
+- Drug: {med_request.get('medication_name')}
+- Dosage: {med_request.get('dosage')}
+- Frequency: {med_request.get('frequency')}
+- ICD-10 Codes: {', '.join(med_request.get('icd10_codes', []))}
+
+CLINICAL RATIONALE:
+{med_request.get('clinical_rationale')}
+
+STEP THERAPY:
+- Prior Therapies Failed: {', '.join(med_request.get('prior_therapies_failed', []))}
+- Step Therapy Completed: {med_request.get('step_therapy_completed')}
+
+AVAILABLE LAB DATA:
+{__import__('json').dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
+
+Your task: Evaluate this PA request using step therapy requirements and medical necessity criteria.
+
+EVALUATION CRITERIA:
+- Is step therapy adequately documented?
+- Does clinical severity justify biologic/specialty medication?
+- Are lab values sufficient to establish disease activity?
+- Is the rationale compliant with formulary guidelines?
+
+RESPONSE FORMAT (JSON):
+{{
+    "authorization_status": "approved" or "denied" or "pending_info",
+    "denial_reason": "<specific reason if denied>",
+    "criteria_used": "<guidelines applied>",
+    "step_therapy_required": true/false,
+    "missing_documentation": ["<item1>", ...],
+    "approved_duration_days": <number or null>,
+    "requires_peer_to_peer": true/false,
+    "reviewer_type": "AI algorithm" or "Nurse reviewer"
+}}"""
+
+def create_pa_appeal_submission_prompt(state, med_request, case):
+    """create task prompt for provider PA appeal submission"""
+    import json
+    denial_reason = state.medication_authorization.denial_reason if state.medication_authorization else "Unknown"
+
+    return f"""TASK: Appeal a PA DENIAL for specialty medication (Phase 2)
+
+CRITICAL CONTEXT: PA WAS DENIED - you are appealing the authorization decision (NOT a claim denial).
+
+DENIAL REASON:
+{denial_reason}
+
+PATIENT CLINICAL DATA:
+- Age: {state.admission.patient_demographics.age}
+- Medical History: {', '.join(state.clinical_presentation.medical_history)}
+- Chief Complaint: {state.clinical_presentation.chief_complaint}
+
+MEDICATION REQUESTED:
+- Drug: {med_request.get('medication_name')}
+- Clinical Rationale: {med_request.get('clinical_rationale')}
+
+AVAILABLE EVIDENCE:
+{json.dumps(case.get('available_test_results', {}), indent=2)}
+
+Your task: Submit PA appeal with additional clinical evidence.
+
+RESPONSE FORMAT (JSON):
+{{
+    "appeal_type": "peer_to_peer" or "written_appeal",
+    "additional_evidence": "<specific clinical data points>",
+    "severity_documentation": "<disease severity indicators>",
+    "guideline_references": ["<guideline 1>", ...]
+}}"""
+
+def create_pa_appeal_decision_prompt(state, provider_appeal):
+    """create task prompt for payor PA appeal review"""
+    return f"""TASK: Medical Director review of PA APPEAL (Phase 2)
+
+CRITICAL CONTEXT: This is an appeal of a PRIOR AUTHORIZATION denial, not a claim denial.
+You previously denied the PA. Now reconsider based on additional evidence.
+
+ORIGINAL PA DENIAL:
+{state.medication_authorization.denial_reason}
+
+PROVIDER APPEAL:
+{provider_appeal.get('additional_evidence')}
+
+SEVERITY DOCUMENTATION:
+{provider_appeal.get('severity_documentation')}
+
+GUIDELINES CITED:
+{', '.join(provider_appeal.get('guideline_references', []))}
+
+Your task: Re-evaluate PA decision based on appeal evidence.
+
+RESPONSE FORMAT (JSON):
+{{
+    "appeal_outcome": "approved" or "upheld_denial",
+    "decision_rationale": "<reasoning>",
+    "criteria_applied": "<guidelines>",
+    "peer_to_peer_conducted": true/false,
+    "reviewer_credentials": "Medical Director, Board Certified <specialty>"
+}}"""
+
+def create_claim_adjudication_prompt(state, med_request, cost_ref, case):
+    """create task prompt for claim review"""
+    total_billed = cost_ref.get('drug_acquisition_cost', 7800) + cost_ref.get('administration_fee', 150)
+
+    return f"""TASK: Review CLAIM for specialty medication (Phase 3)
+
+CRITICAL CONTEXT: This is Phase 3 - CLAIM ADJUDICATION after treatment already delivered.
+The PA was approved in Phase 2, but you can still deny payment if documentation is insufficient.
+
+PATIENT:
+- Age: {state.admission.patient_demographics.age}
+- Medical History: {', '.join(state.clinical_presentation.medical_history)}
+
+CLAIM SUBMITTED:
+- Medication: {med_request.get('medication_name')}
+- Dosage Administered: {med_request.get('dosage')}
+- Amount Billed: ${total_billed:.2f}
+
+PA APPROVAL RATIONALE (from Phase 2):
+{state.medication_authorization.criteria_used if state.medication_authorization else 'PA approved'}
+
+CLINICAL DOCUMENTATION:
+{med_request.get('clinical_rationale')}
+
+LAB DATA:
+{__import__('json').dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
+
+Your task: Review claim and decide to approve/deny PAYMENT.
+
+Common reasons to deny claim despite PA approval:
+- Dosing doesn't match PA approval
+- Documentation insufficient (missing notes, labs)
+- Treatment delivered doesn't match authorized indication
+- Billing errors or upcoding
+
+RESPONSE FORMAT (JSON):
+{{
+    "claim_status": "approved" or "denied" or "partial",
+    "denial_reason": "<specific reason if denied>",
+    "approved_amount": <dollar amount or null>,
+    "criteria_used": "<billing guidelines>",
+    "requires_additional_documentation": ["<item1>", ...],
+    "reviewer_type": "Claims adjudicator" or "Medical reviewer"
+}}"""

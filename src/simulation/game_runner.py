@@ -23,7 +23,14 @@ from src.agents.provider import ProviderAgent
 from src.agents.payor import PayorAgent
 from src.utils.cpt_calculator import CPTCostCalculator
 from src.utils.audit_logger import AuditLogger
-from src.utils.prompts import PROVIDER_SYSTEM_PROMPT, PAYOR_SYSTEM_PROMPT
+from src.utils.prompts import (
+    create_provider_prompt,
+    create_payor_prompt,
+    create_pa_decision_prompt,
+    create_pa_appeal_submission_prompt,
+    create_pa_appeal_decision_prompt,
+    create_claim_adjudication_prompt
+)
 
 
 class UtilizationReviewSimulation:
@@ -368,54 +375,8 @@ class UtilizationReviewSimulation:
         med_request = case.get("medication_request", {})
 
         # payer reviews pa request
-        payor_system_prompt = PAYOR_SYSTEM_PROMPT
-
-        payor_user_prompt = f"""TASK: Review specialty medication PRIOR AUTHORIZATION request (Phase 2)
-
-CRITICAL CONTEXT: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
-Even if you approve the PA, you will review the claim separately after treatment is delivered.
-
-PATIENT:
-- Age: {state.admission.patient_demographics.age}
-- Sex: {state.admission.patient_demographics.sex}
-- Diagnoses: {', '.join(state.clinical_presentation.medical_history)}
-- Chief Complaint: {state.clinical_presentation.chief_complaint}
-
-MEDICATION REQUEST:
-- Drug: {med_request.get('medication_name')}
-- Dosage: {med_request.get('dosage')}
-- Frequency: {med_request.get('frequency')}
-- ICD-10 Codes: {', '.join(med_request.get('icd10_codes', []))}
-
-CLINICAL RATIONALE:
-{med_request.get('clinical_rationale')}
-
-STEP THERAPY:
-- Prior Therapies Failed: {', '.join(med_request.get('prior_therapies_failed', []))}
-- Step Therapy Completed: {med_request.get('step_therapy_completed', False)}
-
-AVAILABLE LAB DATA:
-{json.dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
-
-Your task: Evaluate this PA request using step therapy requirements and medical necessity criteria.
-
-EVALUATION CRITERIA:
-- Is step therapy adequately documented?
-- Does clinical severity justify biologic/specialty medication?
-- Are lab values sufficient to establish disease activity?
-- Is the rationale compliant with formulary guidelines?
-
-RESPONSE FORMAT (JSON):
-{{
-    "authorization_status": "approved" or "denied" or "pending_info",
-    "denial_reason": "<specific reason if denied>",
-    "criteria_used": "<guidelines applied>",
-    "step_therapy_required": true/false,
-    "missing_documentation": ["<item1>", ...],
-    "approved_duration_days": <number or null>,
-    "requires_peer_to_peer": true/false,
-    "reviewer_type": "AI algorithm" or "Nurse reviewer"
-}}"""
+        payor_system_prompt = create_payor_prompt()
+        payor_user_prompt = create_pa_decision_prompt(state, med_request, case)
 
         # combine for LLM call
         full_prompt = f"{payor_system_prompt}\n\n{payor_user_prompt}"
@@ -469,36 +430,8 @@ RESPONSE FORMAT (JSON):
             state.appeal_filed = True
 
             # provider creates pa appeal
-            provider_system_prompt = PROVIDER_SYSTEM_PROMPT
-
-            provider_user_prompt = f"""TASK: Appeal a PA DENIAL for specialty medication (Phase 2)
-
-CRITICAL CONTEXT: PA WAS DENIED - you are appealing the authorization decision (NOT a claim denial).
-
-DENIAL REASON:
-{state.medication_authorization.denial_reason}
-
-PATIENT CLINICAL DATA:
-- Age: {state.admission.patient_demographics.age}
-- Medical History: {', '.join(state.clinical_presentation.medical_history)}
-- Chief Complaint: {state.clinical_presentation.chief_complaint}
-
-MEDICATION REQUESTED:
-- Drug: {med_request.get('medication_name')}
-- Clinical Rationale: {med_request.get('clinical_rationale')}
-
-AVAILABLE EVIDENCE:
-{json.dumps(case.get('available_test_results', {}), indent=2)}
-
-Your task: Submit PA appeal with additional clinical evidence.
-
-RESPONSE FORMAT (JSON):
-{{
-    "appeal_type": "peer_to_peer" or "written_appeal",
-    "additional_evidence": "<specific clinical data points>",
-    "severity_documentation": "<disease severity indicators>",
-    "guideline_references": ["<guideline 1>", ...]
-}}"""
+            provider_system_prompt = create_provider_prompt()
+            provider_user_prompt = create_pa_appeal_submission_prompt(state, med_request, case)
 
             full_prompt = f"{provider_system_prompt}\n\n{provider_user_prompt}"
             messages = [HumanMessage(content=full_prompt)]
@@ -540,35 +473,8 @@ RESPONSE FORMAT (JSON):
             )
 
             # payer reviews pa appeal
-            payor_appeal_system_prompt = PAYOR_SYSTEM_PROMPT
-
-            payor_appeal_user_prompt = f"""TASK: Medical Director review of PA APPEAL (Phase 2)
-
-CRITICAL CONTEXT: This is an appeal of a PRIOR AUTHORIZATION denial, not a claim denial.
-You previously denied the PA. Now reconsider based on additional evidence.
-
-ORIGINAL PA DENIAL:
-{state.medication_authorization.denial_reason}
-
-PROVIDER APPEAL:
-{provider_appeal.get('additional_evidence')}
-
-SEVERITY DOCUMENTATION:
-{provider_appeal.get('severity_documentation')}
-
-GUIDELINES CITED:
-{', '.join(provider_appeal.get('guideline_references', []))}
-
-Your task: Re-evaluate PA decision based on appeal evidence.
-
-RESPONSE FORMAT (JSON):
-{{
-    "appeal_outcome": "approved" or "upheld_denial",
-    "decision_rationale": "<reasoning>",
-    "criteria_applied": "<guidelines>",
-    "peer_to_peer_conducted": true/false,
-    "reviewer_credentials": "Medical Director, Board Certified <specialty>"
-}}"""
+            payor_appeal_system_prompt = create_payor_prompt()
+            payor_appeal_user_prompt = create_pa_appeal_decision_prompt(state, provider_appeal)
 
             full_prompt = f"{payor_appeal_system_prompt}\n\n{payor_appeal_user_prompt}"
             messages = [HumanMessage(content=full_prompt)]
@@ -657,48 +563,8 @@ RESPONSE FORMAT (JSON):
         claim_date = claim_date + timedelta(days=7)  # treatment + claim submission
 
         # payer reviews claim (AFTER treatment delivered)
-        payor_claim_system_prompt = PAYOR_SYSTEM_PROMPT
-
-        payor_claim_user_prompt = f"""TASK: Review CLAIM for specialty medication (Phase 3)
-
-CRITICAL CONTEXT: This is Phase 3 - CLAIM ADJUDICATION after treatment already delivered.
-The PA was approved in Phase 2, but you can still deny payment if documentation is insufficient.
-
-PATIENT:
-- Age: {state.admission.patient_demographics.age}
-- Medical History: {', '.join(state.clinical_presentation.medical_history)}
-
-CLAIM SUBMITTED:
-- Medication: {med_request.get('medication_name')}
-- Dosage Administered: {med_request.get('dosage')}
-- Amount Billed: ${cost_ref.get('drug_acquisition_cost', 7800) + cost_ref.get('administration_fee', 150):.2f}
-
-PA APPROVAL RATIONALE (from Phase 2):
-{state.medication_authorization.criteria_used if state.medication_authorization else 'PA approved'}
-
-CLINICAL DOCUMENTATION:
-{med_request.get('clinical_rationale')}
-
-LAB DATA:
-{json.dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
-
-Your task: Review claim and decide to approve/deny PAYMENT.
-
-Common reasons to deny claim despite PA approval:
-- Dosing doesn't match PA approval
-- Documentation insufficient (missing notes, labs)
-- Treatment delivered doesn't match authorized indication
-- Billing errors or upcoding
-
-RESPONSE FORMAT (JSON):
-{{
-    "claim_status": "approved" or "denied" or "partial",
-    "denial_reason": "<specific reason if denied>",
-    "approved_amount": <dollar amount or null>,
-    "criteria_used": "<billing guidelines>",
-    "requires_additional_documentation": ["<item1>", ...],
-    "reviewer_type": "Claims adjudicator" or "Medical reviewer"
-}}"""
+        payor_claim_system_prompt = create_payor_prompt()
+        payor_claim_user_prompt = create_claim_adjudication_prompt(state, med_request, cost_ref, case)
 
         full_prompt = f"{payor_claim_system_prompt}\n\n{payor_claim_user_prompt}"
         messages = [HumanMessage(content=full_prompt)]
