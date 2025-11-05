@@ -73,29 +73,69 @@ class MermaidAuditGenerator:
         """Format action with key details from parsed output."""
         # For PA requests
         if action == "pa_request" or action == "medication_pa_request":
-            return f"PA Request: {parsed_output.get('medication_name', 'medication')}"
+            medication = parsed_output.get('medication_name', 'medication')
+            return f"PA Request: {medication}"
 
         # For PA decisions
         elif action == "pa_decision":
             status = parsed_output.get("authorization_status", "unknown")
-            return f"PA Decision: {status.upper()}"
+            denial_reason = parsed_output.get("denial_reason", "")
+
+            if status == "denied" and denial_reason:
+                # Truncate denial reason to first ~40 chars
+                short_reason = denial_reason[:40] + "..." if len(denial_reason) > 40 else denial_reason
+                return f"PA DENIED: {short_reason}"
+            elif status == "approved":
+                criteria = parsed_output.get("criteria_used", "")
+                if criteria:
+                    short_criteria = criteria[:30] + "..." if len(criteria) > 30 else criteria
+                    return f"PA APPROVED ({short_criteria})"
+                return "PA APPROVED"
+            else:
+                return f"PA {status.upper()}"
 
         # For appeals
         elif action == "pa_appeal_submission":
             appeal_type = parsed_output.get("appeal_type", "appeal")
-            return f"Submit Appeal: {appeal_type}"
+            additional_evidence = parsed_output.get("additional_evidence", "")
+            if additional_evidence:
+                # Extract key evidence snippet
+                evidence_snippet = additional_evidence[:35] + "..." if len(additional_evidence) > 35 else additional_evidence
+                return f"Appeal ({appeal_type}): {evidence_snippet}"
+            return f"Submit Appeal ({appeal_type})"
 
         elif action == "pa_appeal_decision":
             outcome = parsed_output.get("appeal_outcome", "unknown")
-            return f"Appeal Decision: {outcome.upper()}"
+            rationale = parsed_output.get("decision_rationale", "")
+
+            if outcome == "approved" and rationale:
+                short_rationale = rationale[:35] + "..." if len(rationale) > 35 else rationale
+                return f"Appeal APPROVED: {short_rationale}"
+            elif outcome == "upheld_denial" and rationale:
+                short_rationale = rationale[:35] + "..." if len(rationale) > 35 else rationale
+                return f"Appeal DENIED: {short_rationale}"
+            else:
+                return f"Appeal {outcome.upper()}"
 
         # For claims
         elif action == "claim_submission":
+            amount = parsed_output.get("amount_billed", 0)
+            if amount:
+                return f"Submit Claim (${amount:,.2f})"
             return "Submit Claim (post-treatment)"
 
         elif action == "claim_adjudication":
             status = parsed_output.get("claim_status", "unknown")
-            return f"Claim Decision: {status.upper()}"
+            denial_reason = parsed_output.get("denial_reason", "")
+            approved_amount = parsed_output.get("approved_amount")
+
+            if status == "approved" and approved_amount:
+                return f"Claim APPROVED (${approved_amount:,.2f})"
+            elif status == "denied" and denial_reason:
+                short_reason = denial_reason[:40] + "..." if len(denial_reason) > 40 else denial_reason
+                return f"Claim DENIED: {short_reason}"
+            else:
+                return f"Claim {status.upper()}"
 
         # Generic fallback
         else:
@@ -104,7 +144,8 @@ class MermaidAuditGenerator:
     @staticmethod
     def _format_metadata(metadata: dict) -> str:
         """Format metadata for display in notes."""
-        important_keys = ["iteration", "confidence", "denial_reason", "tests_ordered", "tests_denied"]
+        important_keys = ["medication", "denial_reason", "appeal_type", "pa_approved",
+                         "iteration", "confidence", "tests_ordered", "tests_denied"]
         parts = []
 
         for key in important_keys:
@@ -116,6 +157,16 @@ class MermaidAuditGenerator:
                     parts.append(f"Denied: {len(value)} tests")
                 elif key == "tests_ordered" and value:
                     parts.append(f"Ordered: {len(value)} tests")
+                elif key == "medication" and value:
+                    parts.append(f"Medication: {value}")
+                elif key == "denial_reason" and value:
+                    # Truncate long denial reasons
+                    short_reason = value[:30] + "..." if len(value) > 30 else value
+                    parts.append(f"Reason: {short_reason}")
+                elif key == "appeal_type" and value:
+                    parts.append(f"Appeal Type: {value}")
+                elif key == "pa_approved" and value:
+                    parts.append("PA Previously Approved")
                 else:
                     parts.append(f"{key}: {value}")
 
