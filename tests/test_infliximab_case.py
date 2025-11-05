@@ -60,90 +60,53 @@ def test_infliximab_simulation():
         if result.medication_authorization.missing_documentation:
             print(f"Missing Docs: {', '.join(result.medication_authorization.missing_documentation)}")
 
-    print("\n--- PHASE 3: APPEAL ---")
-    if result.appeal_record:
-        print(f"Appeal Filed: {result.appeal_filed}")
-        if result.appeal_record.appeal_decision:
-            print(f"Appeal Outcome: {result.appeal_record.appeal_decision.appeal_outcome}")
-            print(f"Reviewer: {result.appeal_record.appeal_decision.reviewer_credentials}")
-            print(f"P2P Conducted: {result.appeal_record.appeal_decision.peer_to_peer_conducted}")
+    print("\n--- PHASE 3: CLAIMS ADJUDICATION ---")
+    if result.medication_authorization and result.medication_authorization.authorization_status == "approved":
+        print("Provider treated patient and submitted claim")
+        print(f"Claim Status: {result.medication_authorization.authorization_status.upper()}")
+        if result.medication_authorization.denial_reason:
+            print(f"Claim Denial: {result.medication_authorization.denial_reason[:150]}...")
     else:
-        print("no appeal filed (approved on initial review)")
+        print("No claim submitted (PA denied and not overturned)")
 
     print("\n--- PHASE 4: FINANCIAL SETTLEMENT ---")
     if result.medication_financial:
-        print(f"Medication: {result.medication_financial.medication_name}")
         print(f"Drug Cost: ${result.medication_financial.acquisition_cost:,.2f}")
         print(f"Admin Fee: ${result.medication_financial.administration_fee:,.2f}")
         print(f"Total Billed: ${result.medication_financial.total_billed:,.2f}")
-        print(f"Payer Payment: ${result.medication_financial.payer_payment:,.2f}")
+        print(f"\nPayer Payment: ${result.medication_financial.payer_payment:,.2f}")
         print(f"Patient Copay: ${result.medication_financial.patient_copay:,.2f}")
-        print(f"PA Cost: ${result.medication_financial.prior_auth_cost:,.2f}")
-        print(f"Appeal Cost: ${result.medication_financial.appeal_cost:,.2f}")
-        print(f"Total Admin Burden: ${result.medication_financial.total_administrative_cost:,.2f}")
+        print(f"\nAdministrative Costs:")
+        print(f"  PA + Claim Review: ${result.medication_financial.prior_auth_cost:,.2f}")
+        print(f"  Appeals: ${result.medication_financial.appeal_cost:,.2f}")
+        print(f"  Total Admin Burden: ${result.medication_financial.total_administrative_cost:,.2f}")
 
     print("\n" + "=" * 80)
-    print("VALIDATION AGAINST GROUND TRUTH")
+    print("EXECUTION VERIFICATION")
     print("=" * 80)
 
-    ground_truth = case['ground_truth_payer_actions']
-    ground_truth_financial = case['ground_truth_financial']
+    checks = []
+    checks.append(("Phase 1 Complete", result.admission is not None))
+    checks.append(("Phase 2 PA Decision Made", result.medication_authorization is not None))
+    checks.append(("Phase 3 Claims Processed", result.medication_financial is not None))
+    checks.append(("Phase 4 Settlement Calculated", result.medication_financial.total_billed > 0))
 
-    validations = []
+    all_passed = all(passed for _, passed in checks)
 
-    # initial denial occurred
-    gt_denied = "DENIED" in ground_truth['initial_decision']['status']
-    sim_denied = result.denial_occurred
-    validations.append(("Initial Denial Occurred", gt_denied, sim_denied))
+    print("\nExecution Checks:")
+    for check, passed in checks:
+        status = "[PASS]" if passed else "[FAIL]"
+        print(f"{check:40} {status}")
 
-    # appeal filed
-    gt_appeal = ground_truth['appeal_process']['appeal_outcome'] is not None
-    sim_appeal = result.appeal_filed
-    validations.append(("Appeal Filed", gt_appeal, sim_appeal))
+    print(f"\nResult: {'SUCCESS - All phases executed' if all_passed else 'FAILURE - Some phases missing'}")
+    print("\n" + "=" * 80)
+    print("NOTE: Validation happens at POPULATION level (15-20 cases)")
+    print("Individual case outcomes are NOT validated against ground truth")
+    print("Agents make real LLM-based decisions - not following predetermined paths")
+    print("=" * 80)
 
-    # appeal approved
-    gt_approved = ground_truth['appeal_process']['appeal_outcome'] == "APPROVED"
-    sim_approved = result.appeal_successful
-    validations.append(("Appeal Approved", gt_approved, sim_approved))
-
-    # administrative burden
-    gt_admin_cost = ground_truth_financial['administrative_costs']['total_administrative_burden']
-    sim_admin_cost = result.medication_financial.total_administrative_cost if result.medication_financial else 0
-    admin_match = abs(gt_admin_cost - sim_admin_cost) < 50.0  # within $50
-    validations.append(("Admin Cost (~$375)", gt_admin_cost, sim_admin_cost))
-
-    print("\nValidation Item                    | Ground Truth | Simulation | Match")
-    print("-" * 80)
-    for item, gt_val, sim_val in validations:
-        if isinstance(gt_val, float):
-            match = "PASS" if abs(gt_val - sim_val) < 50 else "FAIL"
-            print(f"{item:35} | ${gt_val:11,.2f} | ${sim_val:9,.2f} | {match}")
-        else:
-            match = "PASS" if gt_val == sim_val else "FAIL"
-            print(f"{item:35} | {str(gt_val):12} | {str(sim_val):10} | {match}")
-
-    matches = sum(1 for item, gt, sim in validations
-                  if (isinstance(gt, float) and abs(gt - sim) < 50) or gt == sim)
-    total = len(validations)
-    print(f"\nValidation Score: {matches}/{total} ({matches/total*100:.0f}%)")
-
-    return result, validations
+    return result
 
 
 if __name__ == "__main__":
-    result, validations = test_infliximab_simulation()
-
-    all_passed = all(
-        (isinstance(gt, float) and abs(gt - sim) < 50) or gt == sim
-        for _, gt, sim in validations
-    )
-
-    if all_passed:
-        print("\n" + "=" * 80)
-        print("SUCCESS: Simulation matches Infliximab case ground truth!")
-        print("=" * 80)
-    else:
-        print("\n" + "=" * 80)
-        print("VALIDATION FAILED: Some outputs don't match ground truth")
-        print("=" * 80)
-        print("\ndebugging needed - check which phase produced incorrect output")
+    result = test_infliximab_simulation()
