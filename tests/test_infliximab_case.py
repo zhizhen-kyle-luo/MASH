@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.simulation.game_runner import UtilizationReviewSimulation
-from src.data.infliximab_crohns_case import get_infliximab_case
+from src.data.case_registry import get_case
 from src.data.case_converter import convert_case_to_models
 from src.utils.mermaid_audit_generator import MermaidAuditGenerator
 import os
@@ -15,7 +15,7 @@ import os
 def test_infliximab_simulation():
     """run infliximab case and validate against ground truth"""
 
-    case = get_infliximab_case()
+    case = get_case("infliximab_crohns_2015")
     print("=" * 80)
     print("RUNNING INFLIXIMAB SPECIALTY MEDICATION CASE SIMULATION")
     print("=" * 80)
