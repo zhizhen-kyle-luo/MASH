@@ -26,10 +26,13 @@ from src.utils.audit_logger import AuditLogger
 from src.utils.prompts import (
     create_provider_prompt,
     create_payor_prompt,
+    create_pa_request_generation_prompt,
     create_pa_decision_prompt,
     create_pa_appeal_submission_prompt,
     create_pa_appeal_decision_prompt,
-    create_claim_adjudication_prompt
+    create_claim_adjudication_prompt,
+    DEFAULT_PROVIDER_PARAMS,
+    DEFAULT_PAYOR_PARAMS
 )
 
 
@@ -121,8 +124,13 @@ class UtilizationReviewSimulation:
                 state.final_authorized_level == case["ground_truth"]["outcome"]
             )
 
-        # finalize audit log and attach to state
-        self.audit_logger.finalize()
+        # finalize audit log and attach to state with behavioral parameters
+        summary = self.audit_logger._generate_summary()
+        summary["behavioral_parameters"] = {
+            "provider": DEFAULT_PROVIDER_PARAMS,
+            "payor": DEFAULT_PAYOR_PARAMS
+        }
+        self.audit_logger.finalize(summary)
         state.audit_log = self.audit_logger.get_audit_log()
 
         return state
@@ -374,11 +382,48 @@ class UtilizationReviewSimulation:
 
         med_request = case.get("medication_request", {})
 
-        # payer reviews pa request
-        payor_system_prompt = create_payor_prompt()
-        payor_user_prompt = create_pa_decision_prompt(state, med_request, case)
+        # step 1: provider generates pa request
+        provider_system_prompt = create_provider_prompt()
+        provider_user_prompt = create_pa_request_generation_prompt(state, med_request, case)
 
-        # combine for LLM call
+        full_prompt = f"{provider_system_prompt}\n\n{provider_user_prompt}"
+        messages = [HumanMessage(content=full_prompt)]
+        response = self.provider.llm.invoke(messages)
+        provider_response_text = response.content
+
+        try:
+            clean_response = provider_response_text
+            if "```json" in clean_response:
+                clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean_response:
+                clean_response = clean_response.split("```")[1].split("```")[0].strip()
+
+            provider_pa_request = json.loads(clean_response)
+        except:
+            provider_pa_request = {
+                "pa_request_letter": "Unable to generate PA request",
+                "step_therapy_documentation": "Error parsing response",
+                "objective_findings": "None",
+                "guideline_references": [],
+                "medical_necessity_summary": "Error generating summary"
+            }
+
+        # log provider pa generation
+        self.audit_logger.log_interaction(
+            phase="phase_2_pa",
+            agent="provider",
+            action="pa_request_generation",
+            system_prompt=provider_system_prompt,
+            user_prompt=provider_user_prompt,
+            llm_response=provider_response_text,
+            parsed_output=provider_pa_request,
+            metadata={"medication": med_request.get('medication_name')}
+        )
+
+        # step 2: payer reviews provider's generated pa request
+        payor_system_prompt = create_payor_prompt()
+        payor_user_prompt = create_pa_decision_prompt(state, provider_pa_request)
+
         full_prompt = f"{payor_system_prompt}\n\n{payor_user_prompt}"
         messages = [HumanMessage(content=full_prompt)]
         response = self.payor.llm.invoke(messages)
@@ -400,7 +445,7 @@ class UtilizationReviewSimulation:
                 "reviewer_type": "AI algorithm"
             }
 
-        # log audit trail with properly separated prompts
+        # log payor decision
         self.audit_logger.log_interaction(
             phase="phase_2_pa",
             agent="payor",

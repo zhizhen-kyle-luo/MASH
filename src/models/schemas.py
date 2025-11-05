@@ -300,6 +300,19 @@ class AuditLog(BaseModel):
                     lines.append(f"- {agent}: {count}")
                 lines.append("")
 
+            if "behavioral_parameters" in self.summary:
+                lines.append("**Behavioral Parameters:**")
+                params = self.summary["behavioral_parameters"]
+                if "provider" in params:
+                    lines.append("- **Provider:**")
+                    for key, value in params["provider"].items():
+                        lines.append(f"  - {key}: {value}")
+                if "payor" in params:
+                    lines.append("- **Payor:**")
+                    for key, value in params["payor"].items():
+                        lines.append(f"  - {key}: {value}")
+                lines.append("")
+
         lines.append("---")
         lines.append("")
 

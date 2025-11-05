@@ -118,34 +118,81 @@ REPUTATION CONSIDERATIONS:
 - Provider word-of-mouth → Affects network recruitment
 - But pressure exists to maintain profitability"""
 
-def create_pa_decision_prompt(state, med_request, case):
-    """create task prompt for medication PA decision"""
+def create_pa_request_generation_prompt(state, med_request, case):
+    """create task prompt for provider to generate PA request"""
+    import json
+
+    return f"""TASK: Generate PRIOR AUTHORIZATION request for specialty medication (Phase 2)
+
+CRITICAL CONTEXT: You are submitting a comprehensive PA request to the insurance company.
+All diagnostics have already been completed. You need to justify medical necessity based on existing data.
+
+PATIENT INFORMATION:
+- Age: {state.admission.patient_demographics.age}
+- Sex: {state.admission.patient_demographics.sex}
+- ICD-10 Diagnosis Codes: {', '.join(med_request.get('icd10_codes', []))}
+- Chief Complaint: {state.clinical_presentation.chief_complaint}
+
+MEDICATION REQUEST:
+- Drug: {med_request.get('medication_name')}
+- J-Code: {med_request.get('j_code', 'N/A')}
+- Dosage: {med_request.get('dosage')}
+- Route: {med_request.get('route', 'N/A')}
+- Frequency: {med_request.get('frequency')}
+- Duration: {med_request.get('duration', 'Ongoing')}
+
+STEP THERAPY HISTORY:
+{chr(10).join(f"- {therapy}" for therapy in med_request.get('prior_therapies_failed', []))}
+
+AVAILABLE CLINICAL DATA:
+Labs: {json.dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
+Imaging: {json.dumps(case.get('available_test_results', {}).get('imaging', {}), indent=2)}
+
+INSURANCE REQUIREMENTS:
+- Step therapy documentation required
+- Medical necessity must be justified with objective data
+- Must reference clinical guidelines
+- Must document failed conventional therapies
+
+Your task: Write a comprehensive prior authorization request letter that:
+1. Summarizes the clinical presentation and diagnosis
+2. Documents step therapy completion and failures
+3. Presents objective data supporting medical necessity (labs, imaging)
+4. References appropriate clinical guidelines (ACG, AGA, NCCN, etc.)
+5. Clearly justifies why this medication is medically necessary
+
+RESPONSE FORMAT (JSON):
+{{
+    "pa_request_letter": "<comprehensive PA justification text>",
+    "step_therapy_documentation": "<detailed documentation of prior failures>",
+    "objective_findings": "<key lab/imaging findings supporting request>",
+    "guideline_references": ["<guideline 1>", "<guideline 2>", ...],
+    "medical_necessity_summary": "<1-2 sentence summary of why medication is necessary>"
+}}"""
+
+def create_pa_decision_prompt(state, provider_pa_request):
+    """create task prompt for payor to review provider's PA request"""
     return f"""TASK: Review specialty medication PRIOR AUTHORIZATION request (Phase 2)
 
 CRITICAL CONTEXT: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
 Even if you approve the PA, you will review the claim separately after treatment is delivered.
 
-PATIENT:
-- Age: {state.admission.patient_demographics.age}
-- Sex: {state.admission.patient_demographics.sex}
-- Diagnoses: {', '.join(state.clinical_presentation.medical_history)}
-- Chief Complaint: {state.clinical_presentation.chief_complaint}
+PROVIDER'S PA REQUEST:
 
-MEDICATION REQUEST:
-- Drug: {med_request.get('medication_name')}
-- Dosage: {med_request.get('dosage')}
-- Frequency: {med_request.get('frequency')}
-- ICD-10 Codes: {', '.join(med_request.get('icd10_codes', []))}
+PA Request Letter:
+{provider_pa_request.get('pa_request_letter', 'No letter provided')}
 
-CLINICAL RATIONALE:
-{med_request.get('clinical_rationale')}
+Step Therapy Documentation:
+{provider_pa_request.get('step_therapy_documentation', 'Not documented')}
 
-STEP THERAPY:
-- Prior Therapies Failed: {', '.join(med_request.get('prior_therapies_failed', []))}
-- Step Therapy Completed: {med_request.get('step_therapy_completed')}
+Objective Findings:
+{provider_pa_request.get('objective_findings', 'None provided')}
 
-AVAILABLE LAB DATA:
-{__import__('json').dumps(case.get('available_test_results', {}).get('labs', {}), indent=2)}
+Guidelines Referenced:
+{', '.join(provider_pa_request.get('guideline_references', []))}
+
+Medical Necessity Summary:
+{provider_pa_request.get('medical_necessity_summary', 'Not provided')}
 
 Your task: Evaluate this PA request using step therapy requirements and medical necessity criteria.
 
@@ -154,6 +201,7 @@ EVALUATION CRITERIA:
 - Does clinical severity justify biologic/specialty medication?
 - Are lab values sufficient to establish disease activity?
 - Is the rationale compliant with formulary guidelines?
+- Is documentation complete or are there gaps?
 
 RESPONSE FORMAT (JSON):
 {{
