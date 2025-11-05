@@ -6,24 +6,16 @@ from src.data.cases.specialty_medications.infliximab_crohns_case import (
     INFLIXIMAB_CASE,
     get_infliximab_case
 )
-from src.data.cases.inpatient_admissions.apprisemd_sepsis_case import (
-    APPRISEMD_CASE,
-    get_apprisemd_case
-)
 
 # registry of all available cases
 CASE_REGISTRY = {
     # specialty medications
     "infliximab_crohns_2015": INFLIXIMAB_CASE,
-
-    # inpatient admissions
-    "apprisemd_sepsis_2024": APPRISEMD_CASE,
 }
 
 # case getter functions
 CASE_GETTERS = {
     "infliximab_crohns_2015": get_infliximab_case,
-    "apprisemd_sepsis_2024": get_apprisemd_case,
 }
 
 def get_case(case_id: str):
