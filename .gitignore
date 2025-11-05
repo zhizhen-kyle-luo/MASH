@@ -29,3 +29,4 @@ data/mimic_raw.json
 # OS
 .DS_Store
 Thumbs.db
+.gpg-batch.txt
