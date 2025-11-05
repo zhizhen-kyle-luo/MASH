@@ -23,6 +23,7 @@ from src.agents.provider import ProviderAgent
 from src.agents.payor import PayorAgent
 from src.utils.cpt_calculator import CPTCostCalculator
 from src.utils.audit_logger import AuditLogger
+from src.utils.prompts import PROVIDER_SYSTEM_PROMPT, PAYOR_SYSTEM_PROMPT
 
 
 class UtilizationReviewSimulation:
@@ -367,9 +368,11 @@ class UtilizationReviewSimulation:
         med_request = case.get("medication_request", {})
 
         # payer reviews pa request
-        payor_prompt = f"""You are a PAYER reviewing a specialty medication PRIOR AUTHORIZATION request.
+        payor_system_prompt = PAYOR_SYSTEM_PROMPT
 
-CRITICAL: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
+        payor_user_prompt = f"""TASK: Review specialty medication PRIOR AUTHORIZATION request (Phase 2)
+
+CRITICAL CONTEXT: This is Phase 2 - you are deciding whether to AUTHORIZE treatment, not whether to PAY.
 Even if you approve the PA, you will review the claim separately after treatment is delivered.
 
 PATIENT:
@@ -414,10 +417,10 @@ RESPONSE FORMAT (JSON):
     "reviewer_type": "AI algorithm" or "Nurse reviewer"
 }}"""
 
-        messages = [HumanMessage(content=payor_prompt)]
+        # combine for LLM call
+        full_prompt = f"{payor_system_prompt}\n\n{payor_user_prompt}"
+        messages = [HumanMessage(content=full_prompt)]
         response = self.payor.llm.invoke(messages)
-
-        # log the llm interaction
         response_text = response.content
 
         try:
@@ -436,13 +439,13 @@ RESPONSE FORMAT (JSON):
                 "reviewer_type": "AI algorithm"
             }
 
-        # log audit trail
+        # log audit trail with properly separated prompts
         self.audit_logger.log_interaction(
             phase="phase_2_pa",
             agent="payor",
             action="pa_decision",
-            system_prompt="Payor agent reviewing medication PA request",
-            user_prompt=payor_prompt,
+            system_prompt=payor_system_prompt,
+            user_prompt=payor_user_prompt,
             llm_response=response_text,
             parsed_output=payor_decision,
             metadata={"medication": med_request.get('medication_name')}
@@ -466,9 +469,11 @@ RESPONSE FORMAT (JSON):
             state.appeal_filed = True
 
             # provider creates pa appeal
-            provider_appeal_prompt = f"""You are a PROVIDER appealing a PA DENIAL for specialty medication.
+            provider_system_prompt = PROVIDER_SYSTEM_PROMPT
 
-PA WAS DENIED - you are appealing the authorization decision (NOT a claim denial).
+            provider_user_prompt = f"""TASK: Appeal a PA DENIAL for specialty medication (Phase 2)
+
+CRITICAL CONTEXT: PA WAS DENIED - you are appealing the authorization decision (NOT a claim denial).
 
 DENIAL REASON:
 {state.medication_authorization.denial_reason}
@@ -495,7 +500,8 @@ RESPONSE FORMAT (JSON):
     "guideline_references": ["<guideline 1>", ...]
 }}"""
 
-            messages = [HumanMessage(content=provider_appeal_prompt)]
+            full_prompt = f"{provider_system_prompt}\n\n{provider_user_prompt}"
+            messages = [HumanMessage(content=full_prompt)]
             response = self.provider.llm.invoke(messages)
             response_text = response.content
 
@@ -514,13 +520,13 @@ RESPONSE FORMAT (JSON):
                     "guideline_references": []
                 }
 
-            # log provider appeal submission
+            # log provider appeal submission with properly separated prompts
             self.audit_logger.log_interaction(
                 phase="phase_2_pa_appeal",
                 agent="provider",
                 action="pa_appeal_submission",
-                system_prompt="Provider agent submitting PA appeal",
-                user_prompt=provider_appeal_prompt,
+                system_prompt=provider_system_prompt,
+                user_prompt=provider_user_prompt,
                 llm_response=response_text,
                 parsed_output=provider_appeal,
                 metadata={"denial_reason": state.medication_authorization.denial_reason}
@@ -534,9 +540,11 @@ RESPONSE FORMAT (JSON):
             )
 
             # payer reviews pa appeal
-            payor_appeal_prompt = f"""You are a PAYER MEDICAL DIRECTOR reviewing a PA APPEAL (Phase 2).
+            payor_appeal_system_prompt = PAYOR_SYSTEM_PROMPT
 
-This is an appeal of a PRIOR AUTHORIZATION denial, not a claim denial.
+            payor_appeal_user_prompt = f"""TASK: Medical Director review of PA APPEAL (Phase 2)
+
+CRITICAL CONTEXT: This is an appeal of a PRIOR AUTHORIZATION denial, not a claim denial.
 You previously denied the PA. Now reconsider based on additional evidence.
 
 ORIGINAL PA DENIAL:
@@ -562,7 +570,8 @@ RESPONSE FORMAT (JSON):
     "reviewer_credentials": "Medical Director, Board Certified <specialty>"
 }}"""
 
-            messages = [HumanMessage(content=payor_appeal_prompt)]
+            full_prompt = f"{payor_appeal_system_prompt}\n\n{payor_appeal_user_prompt}"
+            messages = [HumanMessage(content=full_prompt)]
             response = self.payor.llm.invoke(messages)
             response_text = response.content
 
@@ -581,13 +590,13 @@ RESPONSE FORMAT (JSON):
                     "reviewer_credentials": "Medical Director"
                 }
 
-            # log payor appeal decision
+            # log payor appeal decision with properly separated prompts
             self.audit_logger.log_interaction(
                 phase="phase_2_pa_appeal",
                 agent="payor",
                 action="pa_appeal_decision",
-                system_prompt="Payor medical director reviewing PA appeal",
-                user_prompt=payor_appeal_prompt,
+                system_prompt=payor_appeal_system_prompt,
+                user_prompt=payor_appeal_user_prompt,
                 llm_response=response_text,
                 parsed_output=appeal_decision_data,
                 metadata={"appeal_type": provider_appeal.get("appeal_type")}
@@ -648,9 +657,11 @@ RESPONSE FORMAT (JSON):
         claim_date = claim_date + timedelta(days=7)  # treatment + claim submission
 
         # payer reviews claim (AFTER treatment delivered)
-        payor_claim_prompt = f"""You are a PAYER reviewing a CLAIM for specialty medication (Phase 3).
+        payor_claim_system_prompt = PAYOR_SYSTEM_PROMPT
 
-CRITICAL: This is Phase 3 - CLAIM ADJUDICATION after treatment already delivered.
+        payor_claim_user_prompt = f"""TASK: Review CLAIM for specialty medication (Phase 3)
+
+CRITICAL CONTEXT: This is Phase 3 - CLAIM ADJUDICATION after treatment already delivered.
 The PA was approved in Phase 2, but you can still deny payment if documentation is insufficient.
 
 PATIENT:
@@ -689,7 +700,8 @@ RESPONSE FORMAT (JSON):
     "reviewer_type": "Claims adjudicator" or "Medical reviewer"
 }}"""
 
-        messages = [HumanMessage(content=payor_claim_prompt)]
+        full_prompt = f"{payor_claim_system_prompt}\n\n{payor_claim_user_prompt}"
+        messages = [HumanMessage(content=full_prompt)]
         response = self.payor.llm.invoke(messages)
         response_text = response.content
 
@@ -707,13 +719,13 @@ RESPONSE FORMAT (JSON):
                 "reviewer_type": "Claims adjudicator"
             }
 
-        # log claim adjudication
+        # log claim adjudication with properly separated prompts
         self.audit_logger.log_interaction(
             phase="phase_3_claims",
             agent="payor",
             action="claim_adjudication",
-            system_prompt="Payor claims adjudicator reviewing medication claim",
-            user_prompt=payor_claim_prompt,
+            system_prompt=payor_claim_system_prompt,
+            user_prompt=payor_claim_user_prompt,
             llm_response=response_text,
             parsed_output=claim_decision,
             metadata={"medication": med_request.get('medication_name'), "pa_approved": True}

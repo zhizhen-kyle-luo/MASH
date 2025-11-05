@@ -8,6 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from src.simulation.game_runner import UtilizationReviewSimulation
 from src.data.infliximab_crohns_case import get_infliximab_case
 from src.data.case_converter import convert_case_to_models
+from src.utils.mermaid_audit_generator import MermaidAuditGenerator
+import os
 
 
 def test_infliximab_simulation():
@@ -104,6 +106,23 @@ def test_infliximab_simulation():
     print("Individual case outcomes are NOT validated against ground truth")
     print("Agents make real LLM-based decisions - not following predetermined paths")
     print("=" * 80)
+
+    # Save audit log and mermaid diagram
+    if result.audit_log:
+        output_dir = "outputs"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save audit log as markdown
+        audit_log_path = f"{output_dir}/{result.audit_log.case_id}_audit_log.md"
+        result.audit_log.save_to_markdown(audit_log_path)
+        print(f"\n✓ Audit log saved to: {audit_log_path}")
+
+        # Generate and save mermaid diagram
+        mermaid_path = f"{output_dir}/{result.audit_log.case_id}_workflow.mmd"
+        MermaidAuditGenerator.save_from_state(result, mermaid_path)
+        print(f"✓ Mermaid diagram saved to: {mermaid_path}")
+    else:
+        print("\n⚠ No audit log available")
 
     return result
 
