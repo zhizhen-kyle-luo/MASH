@@ -185,6 +185,9 @@ class EncounterState(BaseModel):
     ground_truth_outcome: Optional[Union[Literal["inpatient", "observation"], Literal["approved", "denied"]]] = None
     simulation_matches_reality: Optional[bool] = None
 
+    # audit log for LLM interactions
+    audit_log: Optional["AuditLog"] = None
+
 
 class Message(BaseModel):
     id: str
@@ -240,3 +243,27 @@ class MedicationFinancialSettlement(BaseModel):
     prior_auth_cost: float = 0.0
     appeal_cost: float = 0.0
     total_administrative_cost: float
+
+
+# Audit Log Schemas for LLM Interaction Tracking
+class LLMInteraction(BaseModel):
+    """Single LLM prompt-response interaction."""
+    interaction_id: str
+    timestamp: str
+    phase: Literal["phase_2_pa", "phase_2_pa_appeal", "phase_3_claims", "phase_4_financial"]
+    agent: Literal["provider", "payor"]
+    action: str  # e.g., "order_tests", "concurrent_review", "submit_appeal", "review_appeal"
+    system_prompt: str
+    user_prompt: str
+    llm_response: str
+    parsed_output: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditLog(BaseModel):
+    """Complete audit log for a case simulation."""
+    case_id: str
+    simulation_start: str
+    simulation_end: Optional[str] = None
+    interactions: List[LLMInteraction] = Field(default_factory=list)
+    summary: Dict[str, Any] = Field(default_factory=dict)
