@@ -113,88 +113,17 @@ Infliximab (anti-TNF-α biologic) indicated per ACG/AGA guidelines for:
         "step_therapy_documentation": "Patient trialed conventional 5-ASA therapy (mesalazine) with documented inadequate response"
     },
 
-    "ground_truth_diagnoses": {
-        "primary": [
-            "Crohn's disease of small intestine (K50.00)",
-            "Intestinal stenosis (K50.8)"
-        ],
-        "severity": "Moderate-to-severe based on fecal calprotectin, hypoalbuminemia, and stenosis"
-    },
+    # note: this case provides phase 1 input data only (patient presentation, clinical data)
+    # phase 2-4 outcomes (pa decisions, claims, appeals, payments) will be simulated by agents
+    # validation happens at population level across 15-20 cases, not individual predictions
 
-    "ground_truth_payer_actions": {
-        "initial_decision": {
-            "status": "DENIED",
-            "denial_reason": """Prior authorization denied. Reasons:
-1. Insufficient documentation of step therapy: No evidence of corticosteroid trial
-2. Insufficient disease severity documentation: Request additional endoscopic scoring (CDAI, SES-CD)
-3. Missing documentation: No documented failure of immunomodulator therapy (azathioprine/6-MP)
-4. Cost concerns: Infliximab is high-cost biologic ($2,500-$5,000 per infusion)
-
-Payer suggests: Step therapy with azathioprine or prednisone before approving biologic therapy.""",
-
-            "payer_rationale": "Deny due to incomplete step therapy ladder despite elevated inflammatory markers"
-        },
-
-        "appeal_process": {
-            "method": "Peer-to-peer with medical director + written appeal",
-            "provider_arguments": [
-                "Fecal calprotectin 827 µg/g indicates severe active inflammation",
-                "Hypoalbuminemia (36.1 g/L) indicates significant disease severity",
-                "Intestinal stenosis represents structural complication requiring aggressive therapy",
-                "Mesalazine failure documented - patient requires biologic escalation",
-                "Steroids contraindicated in stenotic disease (perforation risk)",
-                "ACG guidelines support biologics for moderate-severe CD after 5-ASA failure"
-            ],
-            "appeal_outcome": "APPROVED",
-            "payer_final_reasoning": "Given severe inflammation (fecal calprotectin), structural complication (stenosis), and contraindication to steroids, biologic therapy is medically necessary. Approved for 8-week induction + maintenance."
-        }
-    },
-
-    "ground_truth_financial": {
-        "medication_costs": {
-            "drug_name": "Infliximab (Remicade)",
-            "j_code": "J1745",
-            "cost_per_mg": 24.00,
-            "patient_weight_kg": 65,
-            "dose_mg_per_kg": 5,
-            "total_dose_mg": 325,
-            "drug_acquisition_cost": 7800.00,
-            "administration_fee": 150.00,
-            "total_per_infusion": 7950.00
-        },
-
-        "annual_costs": {
-            "induction_cost": 23850.00,
-            "maintenance_cost": 47700.00,
-            "total_year_1": 71550.00
-        },
-
-        "if_approved": {
-            "payer_pays": 63909.00,
-            "patient_copay": 7641.00,
-            "total_drug_cost": 71550.00
-        },
-
-        "if_denied_no_appeal": {
-            "patient_switches_insurance": "Likely",
-            "provider_samples_burden": "Provider may provide samples short-term",
-            "disease_progression_cost": "Potential hospitalization, surgery if untreated",
-            "estimated_progression_cost": 45000.00
-        },
-
-        "administrative_costs": {
-            "provider_pa_submission": 50.00,
-            "payer_pa_review": 25.00,
-            "provider_appeal_p2p": 180.00,
-            "payer_appeal_review": 120.00,
-            "total_administrative_burden": 375.00
-        },
-
-        "actual_outcome": {
-            "authorization_status": "approved",
-            "approved_after_appeal": True,
-            "total_cost_including_admin": 71925.00
-        }
+    # cost reference data for phase 4 calculations (not ground truth validation)
+    "cost_reference": {
+        "drug_acquisition_cost": 7800.00,  # per infusion
+        "administration_fee": 150.00,
+        "pa_review_cost": 75.00,
+        "claim_review_cost": 50.00,
+        "appeal_cost": 180.00
     },
 
     "insurance_info": {
