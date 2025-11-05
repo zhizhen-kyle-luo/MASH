@@ -13,18 +13,71 @@ DEFAULT_PAYOR_PARAMS = {
     'time_horizon': 'short-term'
 }
 
+# behavioral parameter definitions
+PROVIDER_PARAM_DEFINITIONS = {
+    'patient_care_weight': {
+        'low': 'prioritize revenue and efficiency, minimal time per patient, focus on throughput',
+        'moderate': 'balance patient care with practice economics, standard care protocols',
+        'high': 'patient outcomes are primary concern, willing to spend extra time and resources even if less profitable'
+    },
+    'documentation_style': {
+        'minimal': 'brief notes covering basic requirements only, faster but higher denial risk',
+        'moderate': 'standard documentation following clinical guidelines, typical detail level',
+        'defensive': 'extensive documentation anticipating potential denials, includes extra justification and guideline references'
+    },
+    'risk_tolerance': {
+        'low': 'always wait for PA approval before treatment, avoid financial risk',
+        'moderate': 'treat urgent cases without approval then appeal later, calculated risk-taking',
+        'high': 'frequently treat before approval, willing to absorb costs if denied, patient care over reimbursement'
+    },
+    'ai_adoption': {
+        'low': 'manual documentation, minimal AI assistance, traditional clinical writing',
+        'moderate': 'AI assists with templates and suggestions, provider reviews and edits all content',
+        'high': 'heavily AI-generated documentation with minimal human editing, efficiency-focused'
+    }
+}
+
+PAYOR_PARAM_DEFINITIONS = {
+    'cost_focus': {
+        'low': 'approve most medically reasonable requests, minimize denials and administrative friction',
+        'moderate': 'balance cost control with medical necessity, follow guidelines strictly',
+        'high': 'aggressive cost reduction, deny unless clearly necessary, challenge borderline cases'
+    },
+    'ai_reliance': {
+        'low': 'human medical directors review all PA requests, AI used only for data retrieval',
+        'moderate': 'AI flags questionable cases, humans make all final authorization decisions',
+        'high': 'AI makes most routine decisions autonomously, humans only review appeals and complex cases'
+    },
+    'denial_threshold': {
+        'low': 'liberal interpretation of medical necessity, approve if clinically reasonable',
+        'moderate': 'strictly follow published guidelines, require documented medical necessity',
+        'high': 'conservative interpretation, require extensive documentation even for guideline-supported cases'
+    },
+    'time_horizon': {
+        'short-term': 'minimize immediate costs, deny expensive treatments, ignore long-term member health consequences',
+        'medium-term': 'balance quarterly results with member retention, consider 1-2 year outcomes',
+        'long-term': 'invest in prevention and member satisfaction, consider multi-year cost-effectiveness'
+    }
+}
+
 def create_provider_prompt(params=None):
     """create provider system prompt with behavioral parameters"""
     if params is None:
         params = DEFAULT_PROVIDER_PARAMS
 
+    # get explicit definitions for current parameter values
+    patient_care_def = PROVIDER_PARAM_DEFINITIONS['patient_care_weight'][params['patient_care_weight']]
+    doc_style_def = PROVIDER_PARAM_DEFINITIONS['documentation_style'][params['documentation_style']]
+    risk_def = PROVIDER_PARAM_DEFINITIONS['risk_tolerance'][params['risk_tolerance']]
+    ai_def = PROVIDER_PARAM_DEFINITIONS['ai_adoption'][params['ai_adoption']]
+
     return f"""You are a PROVIDER agent (hospital/clinic) in Fee-for-Service Medicare Advantage.
 
 BEHAVIORAL PARAMETERS:
-- Patient care priority: {params['patient_care_weight']} vs revenue
-- Documentation intensity: {params['documentation_style']}
-- Financial risk tolerance: {params['risk_tolerance']}
-- AI tool usage: {params['ai_adoption']}
+- Patient care priority: {params['patient_care_weight']} ({patient_care_def})
+- Documentation style: {params['documentation_style']} ({doc_style_def})
+- Risk tolerance: {params['risk_tolerance']} ({risk_def})
+- AI adoption: {params['ai_adoption']} ({ai_def})
 
 CRITICAL CONTEXT - WHAT YOUR DECISIONS MEAN:
 
@@ -67,13 +120,19 @@ def create_payor_prompt(params=None):
     if params is None:
         params = DEFAULT_PAYOR_PARAMS
 
+    # get explicit definitions for current parameter values
+    cost_focus_def = PAYOR_PARAM_DEFINITIONS['cost_focus'][params['cost_focus']]
+    ai_reliance_def = PAYOR_PARAM_DEFINITIONS['ai_reliance'][params['ai_reliance']]
+    denial_threshold_def = PAYOR_PARAM_DEFINITIONS['denial_threshold'][params['denial_threshold']]
+    time_horizon_def = PAYOR_PARAM_DEFINITIONS['time_horizon'][params['time_horizon']]
+
     return f"""You are an INSURER agent (Medicare Advantage plan) managing costs using AI systems.
 
 BEHAVIORAL PARAMETERS:
-- Cost reduction focus: {params['cost_focus']} vs quality
-- AI review reliance: {params['ai_reliance']}
-- Denial strictness: {params['denial_threshold']}
-- Planning horizon: {params['time_horizon']}
+- Cost focus: {params['cost_focus']} ({cost_focus_def})
+- AI reliance: {params['ai_reliance']} ({ai_reliance_def})
+- Denial threshold: {params['denial_threshold']} ({denial_threshold_def})
+- Time horizon: {params['time_horizon']} ({time_horizon_def})
 
 CRITICAL CONTEXT - WHAT YOUR DECISIONS MEAN:
 
