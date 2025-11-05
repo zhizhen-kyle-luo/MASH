@@ -30,3 +30,4 @@ data/mimic_raw.json
 .DS_Store
 Thumbs.db
 .gpg-batch.txt
+outputs/
