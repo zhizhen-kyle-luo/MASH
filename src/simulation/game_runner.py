@@ -26,13 +26,17 @@ from src.utils.audit_logger import AuditLogger
 from src.utils.prompts import (
     create_provider_prompt,
     create_payor_prompt,
+    create_unified_provider_request_prompt,
+    create_unified_payor_review_prompt,
     create_pa_request_generation_prompt,
     create_pa_decision_prompt,
     create_pa_appeal_submission_prompt,
     create_pa_appeal_decision_prompt,
     create_claim_adjudication_prompt,
     DEFAULT_PROVIDER_PARAMS,
-    DEFAULT_PAYOR_PARAMS
+    DEFAULT_PAYOR_PARAMS,
+    MAX_ITERATIONS,
+    CONFIDENCE_THRESHOLD
 )
 
 
@@ -51,12 +55,12 @@ class UtilizationReviewSimulation:
         self,
         provider_llm: str = "gpt-4",
         payor_llm: str = "gpt-4",
-        confidence_threshold: float = 0.9,
-        max_iterations: int = 10,
+        confidence_threshold: float = None,
+        max_iterations: int = None,
         azure_config: Dict[str, Any] = None
     ):
-        self.confidence_threshold = confidence_threshold
-        self.max_iterations = max_iterations
+        self.confidence_threshold = confidence_threshold if confidence_threshold is not None else CONFIDENCE_THRESHOLD
+        self.max_iterations = max_iterations if max_iterations is not None else MAX_ITERATIONS
 
         provider_model = self._create_llm(provider_llm, azure_config)
         payor_model = self._create_llm(payor_llm, azure_config)
@@ -102,21 +106,16 @@ class UtilizationReviewSimulation:
         # initialize audit logger for this case
         self.audit_logger = AuditLogger(case_id=case["case_id"])
 
-        # route based on pa type
-        if pa_type == PAType.SPECIALTY_MEDICATION:
-            state.medication_request = case.get("medication_request_model")
-            # phase 2: prior authorization (with appeals if denied)
-            state = self._phase_2_medication_pa(state, case)
-            # phase 3: claims adjudication (separate from pa)
-            state = self._phase_3_medication_claims(state, case)
-            # phase 4: financial settlement based on claim outcome
-            state = self._phase_4_medication_financial(state, case)
+        # unified phase 2 workflow (all case types)
+        state = self._phase_2_unified_pa(state, case)
 
-        else:  # inpatient admission (default)
-            state = self._phase_2_concurrent_review(state, case)
-            if state.denial_occurred:
-                state = self._phase_3_appeal_process(state, case)
-            state = self._phase_4_financial_settlement(state, case)
+        # phase 3: claims adjudication (if treatment was approved and delivered)
+        if state.medication_authorization and state.medication_authorization.authorization_status == "approved":
+            state = self._phase_3_medication_claims(state, case)
+
+        # phase 4: financial settlement
+        if state.medication_authorization:
+            state = self._phase_4_medication_financial(state, case)
 
         if "ground_truth" in case:
             state.ground_truth_outcome = case["ground_truth"]["outcome"]
@@ -135,235 +134,172 @@ class UtilizationReviewSimulation:
 
         return state
 
-    def _phase_2_concurrent_review(
+    def _phase_2_unified_pa(
         self,
         state: EncounterState,
         case: Dict[str, Any]
     ) -> EncounterState:
         """
-        Phase 2: Iterative clinical care with concurrent utilization review.
+        unified phase 2: iterative PA workflow for all case types
 
-        Provider orders tests → Payer reviews → Provider reacts to denials
-        Continues until confidence threshold or max iterations reached.
+        provider agent decides:
+          - if confidence < threshold: request diagnostic test PA
+          - if confidence >= threshold: request treatment PA
+
+        continues until: treatment approved OR max iterations OR agent stops
         """
+        import json
+
         state.review_date = state.admission_date
 
-        iterations = []
-        current_confidence = 0.3
-        available_tests = case.get("available_tests", {})
+        prior_iterations = []
+        treatment_approved = False
 
         for iteration_num in range(1, self.max_iterations + 1):
-            provider_decision = self.provider.order_tests(
-                state,
-                iteration_num,
-                current_confidence,
-                iterations
+            # provider generates request based on confidence
+            provider_system_prompt = create_provider_prompt(DEFAULT_PROVIDER_PARAMS)
+            provider_user_prompt = create_unified_provider_request_prompt(
+                state, case, iteration_num, prior_iterations
             )
 
-            if not provider_decision.get("tests_ordered"):
-                break
+            full_prompt = f"{provider_system_prompt}\n\n{provider_user_prompt}"
+            messages = [HumanMessage(content=full_prompt)]
+            response = self.provider.llm.invoke(messages)
+            provider_response_text = response.content
 
-            tests_ordered = provider_decision["tests_ordered"]
+            try:
+                clean_response = provider_response_text
+                if "```json" in clean_response:
+                    clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_response:
+                    clean_response = clean_response.split("```")[1].split("```")[0].strip()
+                provider_request = json.loads(clean_response)
+            except:
+                provider_request = {
+                    "confidence": 0.5,
+                    "confidence_rationale": "unable to parse response",
+                    "differential_diagnoses": [],
+                    "request_type": "diagnostic_test",
+                    "request_details": {}
+                }
 
-            payor_decision = self.payor.concurrent_review(
-                state,
-                tests_ordered,
-                iteration_num
+            confidence = provider_request.get("confidence", 0.5)
+            request_type = provider_request.get("request_type")
+
+            # log provider request
+            self.audit_logger.log_interaction(
+                phase="phase_2_pa",
+                agent="provider",
+                action=f"{request_type}_request",
+                system_prompt=provider_system_prompt,
+                user_prompt=provider_user_prompt,
+                llm_response=provider_response_text,
+                parsed_output=provider_request,
+                metadata={
+                    "iteration": iteration_num,
+                    "confidence": confidence,
+                    "request_type": request_type
+                }
             )
 
-            iteration_record = ClinicalIteration(
-                iteration_number=iteration_num,
-                tests_ordered=tests_ordered,
-                tests_approved=payor_decision["approved"],
-                tests_denied=payor_decision["denied"],
-                denial_reasons=payor_decision.get("denial_reasons", {}),
-                provider_confidence=provider_decision["confidence"],
-                differential_diagnoses=provider_decision.get("differential", [])
+            # payor reviews request
+            payor_system_prompt = create_payor_prompt(DEFAULT_PAYOR_PARAMS)
+            payor_user_prompt = create_unified_payor_review_prompt(
+                state, provider_request, iteration_num
             )
 
-            iterations.append(iteration_record)
-            current_confidence = provider_decision["confidence"]
+            full_prompt = f"{payor_system_prompt}\n\n{payor_user_prompt}"
+            messages = [HumanMessage(content=full_prompt)]
+            response = self.payor.llm.invoke(messages)
+            payor_response_text = response.content
 
-            if current_confidence >= self.confidence_threshold:
-                break
+            try:
+                clean_response = payor_response_text
+                if "```json" in clean_response:
+                    clean_response = clean_response.split("```json")[1].split("```")[0].strip()
+                elif "```" in clean_response:
+                    clean_response = clean_response.split("```")[1].split("```")[0].strip()
+                payor_decision = json.loads(clean_response)
+            except:
+                payor_decision = {
+                    "authorization_status": "denied",
+                    "denial_reason": "unable to parse response",
+                    "criteria_used": "unknown",
+                    "reviewer_type": "AI algorithm"
+                }
 
-        lab_results = []
-        imaging_results = []
+            # log payor decision
+            self.audit_logger.log_interaction(
+                phase="phase_2_pa",
+                agent="payor",
+                action=f"{request_type}_review",
+                system_prompt=payor_system_prompt,
+                user_prompt=payor_user_prompt,
+                llm_response=payor_response_text,
+                parsed_output=payor_decision,
+                metadata={
+                    "iteration": iteration_num,
+                    "request_type": request_type
+                }
+            )
 
-        if "lab_results" in available_tests:
-            lab_results = available_tests["lab_results"]
-        if "imaging_results" in available_tests:
-            imaging_results = available_tests["imaging_results"]
+            # track iteration for next round
+            iteration_record = {
+                "provider_request_type": request_type,
+                "provider_confidence": confidence,
+                "payor_decision": payor_decision["authorization_status"],
+                "payor_denial_reason": payor_decision.get("denial_reason")
+            }
 
-        state.provider_documentation = ProviderClinicalRecord(
-            iterations=iterations,
-            final_diagnoses=case["admission"].preliminary_diagnoses,
-            lab_results=lab_results,
-            imaging_results=imaging_results,
-            clinical_justification=case["ground_truth"].get(
-                "severity_indicators", []
-            )[0] if case.get("ground_truth") else "Clinical justification pending",
-            severity_indicators=case["ground_truth"].get(
-                "severity_indicators", []
-            ) if case.get("ground_truth") else []
-        )
+            # handle decision outcomes
+            if payor_decision["authorization_status"] == "approved":
+                if request_type == "treatment":
+                    # treatment approved - DONE
+                    treatment_approved = True
+                    state.medication_authorization = MedicationAuthorizationDecision(
+                        reviewer_type=payor_decision.get("reviewer_type", "AI algorithm"),
+                        authorization_status="approved",
+                        denial_reason=None,
+                        criteria_used=payor_decision.get("criteria_used", "Medical necessity"),
+                        step_therapy_required=False,
+                        missing_documentation=[],
+                        approved_duration_days=90,
+                        requires_peer_to_peer=False
+                    )
+                    break
+                elif request_type == "diagnostic_test":
+                    # diagnostic test approved - simulate running test and getting results
+                    test_name = provider_request.get("request_details", {}).get("test_name")
+                    test_results = case.get("available_test_results", {}).get("labs", {}).get(test_name, {})
+                    iteration_record["test_results"] = test_results
 
-        final_ur_decision = self.payor.make_authorization_decision(state)
+            elif payor_decision["authorization_status"] == "denied":
+                # request denied - provider will address in next iteration
+                state.denial_occurred = True
 
-        state.utilization_review = UtilizationReviewDecision(
-            reviewer_type=final_ur_decision["reviewer_type"],
-            authorization_status=final_ur_decision["authorization_status"],
-            authorized_level_of_care=final_ur_decision["authorized_level_of_care"],
-            denial_reason=final_ur_decision.get("denial_reason"),
-            criteria_used=final_ur_decision["criteria_used"],
-            criteria_met=final_ur_decision["criteria_met"],
-            requires_peer_to_peer=final_ur_decision.get("requires_peer_to_peer", False)
-        )
+            prior_iterations.append(iteration_record)
 
-        if state.utilization_review.authorization_status == "denied_suggest_observation":
+        # if treatment never approved, mark as denied
+        if not treatment_approved:
+            state.medication_authorization = MedicationAuthorizationDecision(
+                reviewer_type="AI algorithm",
+                authorization_status="denied",
+                denial_reason="max iterations reached without approval",
+                criteria_used="Medical necessity",
+                step_therapy_required=False,
+                missing_documentation=[],
+                approved_duration_days=None,
+                requires_peer_to_peer=False
+            )
             state.denial_occurred = True
 
         return state
 
-    def _phase_3_appeal_process(
-        self,
-        state: EncounterState,
-        case: Dict[str, Any]
-    ) -> EncounterState:
-        """
-        Phase 3: Provider appeals denial through peer-to-peer review.
-        """
-        state.appeal_date = state.review_date + timedelta(days=1)
-        state.appeal_filed = True
-
-        appeal_submission_data = self.provider.submit_appeal(
-            state,
-            state.utilization_review
-        )
-
-        additional_evidence = appeal_submission_data.get("additional_evidence", "")
-        if isinstance(additional_evidence, dict):
-            additional_evidence = str(additional_evidence)
-
-        severity_doc = appeal_submission_data.get("severity_documentation", "")
-        if isinstance(severity_doc, dict):
-            severity_doc = str(severity_doc)
-
-        appeal_submission = AppealSubmission(
-            appeal_type=appeal_submission_data.get("appeal_type", "peer_to_peer"),
-            additional_clinical_evidence=additional_evidence,
-            severity_documentation=severity_doc,
-            guideline_references=appeal_submission_data.get("guideline_references", [])
-        )
-
-        appeal_decision_data = self.payor.review_appeal(
-            state,
-            appeal_submission
-        )
-
-        appeal_decision = AppealDecision(
-            reviewer_credentials=appeal_decision_data["reviewer_credentials"],
-            appeal_outcome=appeal_decision_data["appeal_outcome"],
-            final_authorized_level=appeal_decision_data["final_authorized_level"],
-            decision_rationale=appeal_decision_data["decision_rationale"],
-            criteria_applied=appeal_decision_data["criteria_applied"],
-            peer_to_peer_conducted=appeal_decision_data.get("peer_to_peer_conducted", False)
-        )
-
-        state.appeal_record = AppealRecord(
-            initial_denial=state.utilization_review,
-            appeal_submission=appeal_submission,
-            appeal_decision=appeal_decision,
-            appeal_filed=True,
-            appeal_successful=(appeal_decision.appeal_outcome == "approved")
-        )
-
-        state.final_authorized_level = appeal_decision.final_authorized_level
-        state.appeal_successful = state.appeal_record.appeal_successful
-
-        return state
-
-    def _phase_4_financial_settlement(
-        self,
-        state: EncounterState,
-        case: Dict[str, Any]
-    ) -> EncounterState:
-        """
-        Phase 4: Calculate DRG payment and financial settlement.
-        """
-        state.settlement_date = (state.appeal_date or state.review_date) + timedelta(days=30)
-
-        if not state.final_authorized_level:
-            state.final_authorized_level = state.utilization_review.authorized_level_of_care
-
-        ground_truth = case.get("ground_truth_financial", {})
-        drg_info = ground_truth.get("drg_assignment", {})
-
-        if state.final_authorized_level == "inpatient":
-            drg_code = drg_info.get("drg_code", "Unknown")
-            drg_description = drg_info.get("drg_description", "Unspecified DRG")
-            drg_payment = drg_info.get("payment_amount", 0.0)
-
-            relative_weight = drg_payment / 3614.0 if drg_payment > 0 else 1.0
-
-            drg_assignment = DRGAssignment(
-                drg_code=drg_code,
-                drg_description=drg_description,
-                relative_weight=relative_weight,
-                geometric_mean_los=5.0,
-                base_payment_rate=3614.0,
-                total_drg_payment=drg_payment
-            )
-
-            line_items = [
-                ServiceLineItem(
-                    service_description=f"DRG {drg_code} - {drg_description}",
-                    cpt_or_drg_code=drg_code,
-                    billed_amount=drg_payment,
-                    allowed_amount=drg_payment,
-                    paid_amount=drg_payment
-                )
-            ]
-
-            total_payment = drg_payment
-            patient_copay = ground_truth.get("if_approved_inpatient", {}).get("patient_copay", 350.0)
-            hospital_cost = drg_payment * 0.75
-
-        else:
-            drg_assignment = None
-            line_items = [
-                ServiceLineItem(
-                    service_description="Observation Services",
-                    cpt_or_drg_code="99234",
-                    billed_amount=2500.0,
-                    allowed_amount=1800.0,
-                    paid_amount=1800.0
-                )
-            ]
-            total_payment = 1800.0
-            patient_copay = 150.0
-            hospital_cost = total_payment * 0.70
-
-        state.financial_settlement = FinancialSettlement(
-            line_items=line_items,
-            drg_assignment=drg_assignment,
-            total_billed_charges=total_payment,
-            total_allowed_amount=total_payment,
-            payer_payment=total_payment - patient_copay,
-            patient_responsibility=patient_copay,
-            total_hospital_revenue=total_payment,
-            estimated_hospital_cost=hospital_cost,
-            hospital_margin=total_payment - hospital_cost
-        )
-
-        return state
-
     def run_multiple_cases(self, cases: list[Dict[str, Any]]) -> list[EncounterState]:
-        """Run multiple cases sequentially."""
+        """run multiple cases sequentially"""
         return [self.run_case(case) for case in cases]
 
-    # medication pa workflow methods
-    def _phase_2_medication_pa(
+    def _phase_3_medication_claims(
         self,
         state: EncounterState,
         case: Dict[str, Any]
