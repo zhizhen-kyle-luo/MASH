@@ -1,3 +1,40 @@
+# simulation configuration
+MAX_ITERATIONS = 10
+CONFIDENCE_THRESHOLD = 0.9
+
+# confidence score guidelines for provider agent
+CONFIDENCE_GUIDELINES = """
+CONFIDENCE SCORE (0.0-1.0):
+represents your diagnostic certainty for proposing treatment
+
+0.0-0.3: very uncertain diagnosis
+  - need basic diagnostic workup (CBC, basic metabolic panel, vital signs)
+  - multiple differentials remain plausible
+  - insufficient data to narrow diagnosis
+
+0.3-0.6: working diagnosis forming
+  - initial test results available
+  - narrowing differential based on objective findings
+  - need confirmatory testing to establish diagnosis
+
+0.6-0.9: strong clinical suspicion
+  - key diagnostic criteria met
+  - may need confirmatory testing (imaging, biopsy, specialized labs)
+  - high probability of specific diagnosis but not definitive
+
+0.9-1.0: confident diagnosis
+  - diagnostic criteria satisfied per clinical guidelines
+  - objective evidence supports diagnosis
+  - ready to propose definitive treatment
+  - evidence sufficient for treatment PA request
+
+DECISION LOGIC:
+- if confidence < 0.9: request diagnostic test PA to build confidence
+- if confidence >= 0.9: request treatment PA (medication, procedure, admission)
+
+IMPORTANT: generate your own confidence score based on available clinical data
+"""
+
 # default behavioral parameters
 DEFAULT_PROVIDER_PARAMS = {
     'patient_care_weight': 'high',
@@ -28,7 +65,7 @@ PROVIDER_PARAM_DEFINITIONS = {
     'risk_tolerance': {
         'low': 'always wait for PA approval before treatment, avoid financial risk',
         'moderate': 'treat urgent cases without approval then appeal later, calculated risk-taking',
-        'high': 'frequently treat before approval, willing to absorb costs if denied, patient care over reimbursement'
+        'high': 'frequently treat before approval, willing to absorb costs if denied'
     },
     'ai_adoption': {
         'low': 'manual documentation, minimal AI assistance, traditional clinical writing',
@@ -336,6 +373,122 @@ RESPONSE FORMAT (JSON):
     "criteria_applied": "<guidelines>",
     "peer_to_peer_conducted": true/false,
     "reviewer_credentials": "Medical Director, Board Certified <specialty>"
+}}"""
+
+def create_unified_provider_request_prompt(state, case, iteration, prior_iterations):
+    """unified provider prompt: decides diagnostic test PA or treatment PA based on confidence"""
+    import json
+
+    # format prior iterations for context
+    prior_context = ""
+    if prior_iterations:
+        prior_context = "PRIOR ITERATIONS:\n"
+        for i, iter_data in enumerate(prior_iterations, 1):
+            prior_context += f"\nIteration {i}:\n"
+            prior_context += f"  Your request: {iter_data['provider_request_type']}\n"
+            prior_context += f"  Your confidence: {iter_data['provider_confidence']}\n"
+            prior_context += f"  Payor decision: {iter_data['payor_decision']}\n"
+            if iter_data.get('payor_denial_reason'):
+                prior_context += f"  Denial reason: {iter_data['payor_denial_reason']}\n"
+            if iter_data.get('test_results'):
+                prior_context += f"  Test results: {json.dumps(iter_data['test_results'], indent=4)}\n"
+
+    return f"""ITERATION {iteration}/{MAX_ITERATIONS}
+
+{CONFIDENCE_GUIDELINES}
+
+{prior_context}
+
+PATIENT INFORMATION:
+- Age: {state.admission.patient_demographics.age}
+- Sex: {state.admission.patient_demographics.sex}
+- Chief Complaint: {state.clinical_presentation.chief_complaint}
+- Medical History: {', '.join(state.clinical_presentation.medical_history)}
+- Current Diagnoses: {', '.join(state.admission.preliminary_diagnoses)}
+
+AVAILABLE CLINICAL DATA:
+{json.dumps(case.get('available_test_results', {}), indent=2)}
+
+MEDICATION REQUEST (if applicable):
+{json.dumps(case.get('medication_request', {}), indent=2) if case.get('medication_request') else 'No medication specified yet'}
+
+TASK: Based on your current diagnostic confidence, decide your next action:
+- If confidence < {CONFIDENCE_THRESHOLD}: Request diagnostic test PA to build confidence
+- If confidence >= {CONFIDENCE_THRESHOLD}: Request treatment PA (medication, procedure, admission)
+
+RESPONSE FORMAT (JSON):
+{{
+    "confidence": <float 0.0-1.0>,
+    "confidence_rationale": "<explain why this confidence level based on available data>",
+    "differential_diagnoses": ["<diagnosis 1>", "<diagnosis 2>", ...],
+    "request_type": "diagnostic_test" or "treatment",
+    "request_details": {{
+        // if diagnostic_test:
+        "test_name": "<specific test>",
+        "test_justification": "<why this test will increase confidence>",
+        "expected_findings": "<what results would confirm/rule out diagnosis>"
+
+        // if treatment:
+        "treatment_type": "medication" or "procedure" or "admission",
+        "treatment_name": "<specific treatment>",
+        "treatment_justification": "<why treatment is medically necessary>",
+        "clinical_evidence": "<objective data supporting request>",
+        "guideline_references": ["<guideline 1>", "<guideline 2>"]
+    }}
+}}"""
+
+def create_unified_payor_review_prompt(state, provider_request, iteration):
+    """unified payor prompt: reviews any PA request (diagnostic or treatment)"""
+    import json
+
+    request_type = provider_request.get('request_type')
+    request_details = provider_request.get('request_details', {})
+
+    if request_type == 'diagnostic_test':
+        request_summary = f"""
+DIAGNOSTIC TEST PA REQUEST:
+Test: {request_details.get('test_name')}
+Justification: {request_details.get('test_justification')}
+Expected Findings: {request_details.get('expected_findings')}
+"""
+    else:  # treatment
+        request_summary = f"""
+TREATMENT PA REQUEST:
+Type: {request_details.get('treatment_type')}
+Treatment: {request_details.get('treatment_name')}
+Justification: {request_details.get('treatment_justification')}
+Clinical Evidence: {request_details.get('clinical_evidence')}
+Guidelines: {', '.join(request_details.get('guideline_references', []))}
+"""
+
+    return f"""ITERATION {iteration}/{MAX_ITERATIONS}
+
+PROVIDER REQUEST:
+Provider Confidence: {provider_request.get('confidence')}
+Confidence Rationale: {provider_request.get('confidence_rationale')}
+Differential Diagnoses: {', '.join(provider_request.get('differential_diagnoses', []))}
+
+{request_summary}
+
+PATIENT CONTEXT:
+- Age: {state.admission.patient_demographics.age}
+- Medical History: {', '.join(state.clinical_presentation.medical_history)}
+- Current Diagnoses: {', '.join(state.admission.preliminary_diagnoses)}
+
+TASK: Review PA request and approve/deny based on medical necessity and coverage criteria.
+
+EVALUATION CRITERIA:
+{"- Is diagnostic test medically necessary to establish diagnosis?" if request_type == 'diagnostic_test' else "- Is treatment medically necessary based on clinical evidence?"}
+{"- Will test results meaningfully change clinical management?" if request_type == 'diagnostic_test' else "- Has step therapy been completed (if applicable)?"}
+- Does request align with clinical guidelines?
+- Is documentation sufficient?
+
+RESPONSE FORMAT (JSON):
+{{
+    "authorization_status": "approved" or "denied",
+    "denial_reason": "<specific reason if denied, including what's missing or why unnecessary>",
+    "criteria_used": "<guidelines or policies applied>",
+    "reviewer_type": "AI algorithm" or "Nurse reviewer" or "Medical director"
 }}"""
 
 def create_claim_adjudication_prompt(state, med_request, cost_ref, case):
